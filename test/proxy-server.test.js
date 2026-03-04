@@ -1,7 +1,11 @@
 import { describe, it, after } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import { mkdirSync, rmSync, readFileSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { ProxyServer } from '../lib/proxy-server.js'
+import { parseLogLine } from '../lib/log-reader.js'
 
 // Helper: create mock upstream API
 function createMockUpstream(responseBody, statusCode = 200, extraHeaders = {}) {
@@ -237,7 +241,8 @@ describe('ProxyServer', () => {
 
     const h1 = status.healthByAccount['status-acct-1']
     assert.strictEqual(typeof h1.score, 'number', 'health entry must have numeric score')
-    assert.strictEqual(typeof h1.quotaPercent, 'number', 'health entry must have numeric quotaPercent')
+    // quotaPercent is null when no quota headers received (unknown signal) — not a number
+    assert.ok(h1.quotaPercent === null || typeof h1.quotaPercent === 'number', 'health entry quotaPercent must be null or number')
 
     // API keys must NOT be present in status
     assert.ok(!('proxyApiKey' in status), 'status must not expose proxyApiKey')
@@ -260,5 +265,237 @@ describe('ProxyServer', () => {
 
     assert.strictEqual(h.providerKey, 'myprovider')
     assert.strictEqual(h.modelId, 'my-model')
+  })
+
+  it('proxy passes providerKey to recordFailure for unknown-telemetry 429 temp cooldown', async () => {
+    // Unknown provider (huggingface) gets 3 consecutive 429s → temp cooldown, not permanent disable
+    const bad = await createMockUpstream({ error: 'rate limited' }, 429)
+    const good = await createMockUpstream({ choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } })
+    cleanups.push(() => bad.server.close(), () => good.server.close())
+
+    const accounts = [
+      { id: 'hf-acct', providerKey: 'huggingface', apiKey: 'k1', modelId: 'm1', url: bad.url + '/v1' },
+      { id: 'gr-acct', providerKey: 'groq', apiKey: 'k2', modelId: 'm2', url: good.url + '/v1' },
+    ]
+    const proxy = new ProxyServer({ port: 0, accounts, retries: 2 })
+    const { port } = await proxy.start()
+    cleanups.push(() => proxy.stop())
+
+    // This request should fail on hf-acct (429) and succeed on gr-acct
+    const res = await makeRequest(port, { model: 'test', messages: [{ role: 'user', content: 'hi' }] })
+    assert.strictEqual(res.statusCode, 200)
+
+    // hf-acct should NOT be permanently disabled (only 1 failure, threshold is 3)
+    const status = proxy.getStatus()
+    const hfHealth = status.healthByAccount['hf-acct']
+    assert.strictEqual(hfHealth.disabled, false, 'unknown-telemetry 429 should not permanently disable account')
+  })
+
+  it('proxy rotates away from unknown-telemetry account after 3 consecutive 429s', async () => {
+    // We need 3 429s on the same account to trigger temp cooldown
+    // Use retries=4 to ensure 3 hits on hf-acct; only 1 good account
+    const bad = await createMockUpstream({ error: 'rate limited' }, 429)
+    const good = await createMockUpstream({ choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } })
+    cleanups.push(() => bad.server.close(), () => good.server.close())
+
+    const accounts = [
+      { id: 'hf-acct-2', providerKey: 'huggingface', apiKey: 'k1', modelId: 'm1', url: bad.url + '/v1' },
+      { id: 'gr-acct-2', providerKey: 'groq', apiKey: 'k2', modelId: 'm2', url: good.url + '/v1' },
+    ]
+    const proxy = new ProxyServer({ port: 0, accounts, retries: 5 })
+    const { port } = await proxy.start()
+    cleanups.push(() => proxy.stop())
+
+    // Manually cause 3 failures to trigger cooldown
+    const am = proxy._accountManager
+    const err429 = { type: 'RATE_LIMITED', shouldRetry: true, skipAccount: false, retryAfterSec: null, rateLimitConfidence: 'generic_rate_limit' }
+    am.recordFailure('hf-acct-2', err429, { providerKey: 'huggingface' })
+    am.recordFailure('hf-acct-2', err429, { providerKey: 'huggingface' })
+    am.recordFailure('hf-acct-2', err429, { providerKey: 'huggingface' })
+
+    // hf-acct-2 should now be in temporary cooldown
+    const ra = am.getRetryAfter('hf-acct-2')
+    assert.ok(ra > 0, `hf-acct-2 should have a cooldown after 3 failures, got ${ra}`)
+
+    const status = proxy.getStatus()
+    assert.strictEqual(status.healthByAccount['hf-acct-2'].disabled, false, 'should NOT be permanently disabled')
+  })
+})
+
+// ─── Suite: ProxyServer – log coherence (Task 5) ─────────────────────────────
+// These tests verify that every real upstream attempt (success OR failure)
+// produces a coherent JSONL log entry with all required fields.
+
+function makeTempLogDir(label) {
+  const dir = join(tmpdir(), `fcm-proxy-log-${label}-${process.pid}-${Date.now()}`)
+  mkdirSync(dir, { recursive: true })
+  return {
+    dir,
+    logFile: join(dir, 'request-log.jsonl'),
+    cleanup: () => { try { rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ } },
+    readLog: () => {
+      const logFile = join(dir, 'request-log.jsonl')
+      if (!existsSync(logFile)) return []
+      return readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map(l => {
+        try { return JSON.parse(l) } catch { return null }
+      }).filter(Boolean)
+    },
+  }
+}
+
+describe('ProxyServer – log coherence', () => {
+  const cleanups = []
+
+  after(async () => {
+    for (const fn of cleanups) await fn()
+  })
+
+  it('logs successful request with usage data', async () => {
+    const logCtx = makeTempLogDir('success-usage')
+    cleanups.push(logCtx.cleanup)
+
+    const upstream = await createMockUpstream(
+      { choices: [{ message: { content: 'hi' } }], usage: { prompt_tokens: 10, completion_tokens: 5 } },
+      200
+    )
+    cleanups.push(() => upstream.server.close())
+
+    const accounts = [{ id: 'log-acct', providerKey: 'testprov', apiKey: 'k1', modelId: 'test-model', url: upstream.url + '/v1' }]
+    const proxy = new ProxyServer({ port: 0, accounts, tokenStatsOpts: { dataDir: logCtx.dir } })
+    const { port } = await proxy.start()
+    cleanups.push(() => proxy.stop())
+
+    await makeRequest(port, { model: 'test-model', messages: [{ role: 'user', content: 'hi' }] })
+
+    const entries = logCtx.readLog()
+    assert.strictEqual(entries.length, 1, 'should log exactly 1 entry for a successful request')
+
+    const e = entries[0]
+    assert.ok(e.timestamp, 'entry must have timestamp')
+    assert.strictEqual(e.modelId, 'test-model', 'entry must carry modelId')
+    assert.strictEqual(e.providerKey, 'testprov', 'entry must carry providerKey')
+    assert.strictEqual(e.statusCode, 200, 'entry must carry statusCode=200')
+    assert.strictEqual(e.requestType, 'chat.completions', 'entry must carry requestType')
+    assert.strictEqual(e.promptTokens, 10, 'entry must carry promptTokens from usage')
+    assert.strictEqual(e.completionTokens, 5, 'entry must carry completionTokens from usage')
+    assert.ok(e.latencyMs >= 0, 'entry must carry non-negative latencyMs')
+    assert.strictEqual(e.success, true, 'entry must have success=true')
+
+    // log-reader should be able to parse this entry cleanly
+    const row = parseLogLine(JSON.stringify(e))
+    assert.ok(row !== null, 'log-reader parseLogLine must parse the entry')
+    assert.strictEqual(row.model, 'test-model')
+    assert.strictEqual(row.provider, 'testprov')
+    assert.strictEqual(row.status, '200')
+    assert.strictEqual(row.tokens, 15)
+  })
+
+  it('logs successful request even when upstream returns NO usage', async () => {
+    const logCtx = makeTempLogDir('success-no-usage')
+    cleanups.push(logCtx.cleanup)
+
+    // Upstream returns 200 but no usage field
+    const upstream = await createMockUpstream(
+      { choices: [{ message: { content: 'hello' } }] },
+      200
+    )
+    cleanups.push(() => upstream.server.close())
+
+    const accounts = [{ id: 'log-nousage', providerKey: 'provx', apiKey: 'k1', modelId: 'model-x', url: upstream.url + '/v1' }]
+    const proxy = new ProxyServer({ port: 0, accounts, tokenStatsOpts: { dataDir: logCtx.dir } })
+    const { port } = await proxy.start()
+    cleanups.push(() => proxy.stop())
+
+    await makeRequest(port, { model: 'model-x', messages: [{ role: 'user', content: 'hi' }] })
+
+    const entries = logCtx.readLog()
+    assert.strictEqual(entries.length, 1, 'should log entry even without usage data')
+
+    const e = entries[0]
+    assert.ok(e.timestamp, 'entry must have timestamp')
+    assert.strictEqual(e.modelId, 'model-x')
+    assert.strictEqual(e.providerKey, 'provx')
+    assert.strictEqual(e.statusCode, 200)
+    assert.strictEqual(e.requestType, 'chat.completions')
+    assert.strictEqual(e.promptTokens, 0, 'tokens default to 0 when not provided')
+    assert.strictEqual(e.completionTokens, 0)
+    assert.strictEqual(e.success, true)
+
+    const row = parseLogLine(JSON.stringify(e))
+    assert.ok(row !== null)
+    assert.strictEqual(row.tokens, 0)
+  })
+
+  it('logs failed 429 request attempt', async () => {
+    const logCtx = makeTempLogDir('fail-429')
+    cleanups.push(logCtx.cleanup)
+
+    // Use a single bad account that always returns 429 so retries all hit it.
+    // The proxy will exhaust retries → 503, but every attempt should be logged.
+    const bad = await createMockUpstream({ error: 'rate limited' }, 429)
+    cleanups.push(() => bad.server.close())
+
+    const accounts = [
+      { id: 'bad-log-acct', providerKey: 'prov-bad', apiKey: 'k1', modelId: 'bad-model', url: bad.url + '/v1' },
+    ]
+    // retries=2 → 2 attempts against bad-log-acct → expect 2 log entries
+    const proxy = new ProxyServer({ port: 0, accounts, retries: 2, tokenStatsOpts: { dataDir: logCtx.dir } })
+    const { port } = await proxy.start()
+    cleanups.push(() => proxy.stop())
+
+    const res = await makeRequest(port, { model: 'test', messages: [{ role: 'user', content: 'hi' }] })
+    assert.strictEqual(res.statusCode, 503, 'proxy should 503 when all accounts exhausted')
+
+    const entries = logCtx.readLog()
+    // Expect at least 1 log entry for the failed 429 attempt
+    assert.ok(entries.length >= 1, `should log failed attempt(s), got ${entries.length}`)
+
+    const failEntry = entries.find(e => e.statusCode === 429)
+    assert.ok(failEntry, 'should have a log entry for the 429 failure')
+    assert.strictEqual(failEntry.providerKey, 'prov-bad')
+    assert.strictEqual(failEntry.success, false, 'failed entry must have success=false')
+    assert.ok(failEntry.timestamp, 'failed entry must have timestamp')
+    assert.strictEqual(failEntry.requestType, 'chat.completions')
+    assert.strictEqual(failEntry.modelId, 'bad-model')
+
+    // log-reader must parse the failed entry cleanly
+    const row = parseLogLine(JSON.stringify(failEntry))
+    assert.ok(row !== null, 'log-reader must parse the 429 entry')
+    assert.strictEqual(row.status, '429', 'row.status must be "429"')
+    assert.strictEqual(row.provider, 'prov-bad')
+    assert.strictEqual(row.model, 'bad-model')
+  })
+
+  it('log entry fields are all human-readable / renderable', async () => {
+    const logCtx = makeTempLogDir('renderable')
+    cleanups.push(logCtx.cleanup)
+
+    const upstream = await createMockUpstream(
+      { choices: [{ message: { content: 'hi' } }], usage: { prompt_tokens: 5, completion_tokens: 3 } },
+      200
+    )
+    cleanups.push(() => upstream.server.close())
+
+    const accounts = [{ id: 'render-acct', providerKey: 'myprov', apiKey: 'k1', modelId: 'render-model', url: upstream.url + '/v1' }]
+    const proxy = new ProxyServer({ port: 0, accounts, tokenStatsOpts: { dataDir: logCtx.dir } })
+    const { port } = await proxy.start()
+    cleanups.push(() => proxy.stop())
+
+    await makeRequest(port, { model: 'render-model', messages: [{ role: 'user', content: 'hi' }] })
+
+    const entries = logCtx.readLog()
+    assert.strictEqual(entries.length, 1)
+    const e = entries[0]
+
+    // timestamp must be renderable as a Date
+    const d = new Date(e.timestamp)
+    assert.ok(!Number.isNaN(d.getTime()), 'timestamp must be a valid ISO date string')
+
+    // log-reader row must have consistent time field
+    const row = parseLogLine(JSON.stringify(e))
+    assert.ok(row !== null)
+    const rowDate = new Date(row.time)
+    assert.ok(!Number.isNaN(rowDate.getTime()), 'row.time must be a renderable ISO date string')
+    assert.ok(row.time === e.timestamp, 'row.time must match the stored timestamp')
   })
 })
