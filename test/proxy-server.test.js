@@ -154,8 +154,8 @@ describe('ProxyServer', () => {
     cleanups.push(() => bad.server.close(), () => good.server.close())
 
     const accounts = [
-      { id: 'bad-acct', providerKey: 'p1', apiKey: 'k1', modelId: 'm1', url: bad.url + '/v1' },
-      { id: 'good-acct', providerKey: 'p2', apiKey: 'k2', modelId: 'm2', url: good.url + '/v1' },
+      { id: 'bad-acct', providerKey: 'p1', apiKey: 'k1', modelId: 'm1', proxyModelId: 'test', url: bad.url + '/v1' },
+      { id: 'good-acct', providerKey: 'p2', apiKey: 'k2', modelId: 'm2', proxyModelId: 'test', url: good.url + '/v1' },
     ]
     const proxy = new ProxyServer({ port: 0, accounts, retries: 2 })
     const { port } = await proxy.start()
@@ -170,7 +170,7 @@ describe('ProxyServer', () => {
     cleanups.push(() => bad.server.close())
 
     const accounts = [
-      { id: 'only-acct', providerKey: 'p1', apiKey: 'k1', modelId: 'm1', url: bad.url + '/v1' },
+      { id: 'only-acct', providerKey: 'p1', apiKey: 'k1', modelId: 'm1', proxyModelId: 'test', url: bad.url + '/v1' },
     ]
     const proxy = new ProxyServer({ port: 0, accounts, retries: 1 })
     const { port } = await proxy.start()
@@ -203,7 +203,7 @@ describe('ProxyServer', () => {
     cleanups.push(() => bad.server.close())
 
     const accounts = [
-      { id: 'retry-acct', providerKey: 'p1', apiKey: 'k1', modelId: 'm1', url: bad.url + '/v1' },
+      { id: 'retry-acct', providerKey: 'p1', apiKey: 'k1', modelId: 'm1', proxyModelId: 'test', url: bad.url + '/v1' },
     ]
     const proxy = new ProxyServer({ port: 0, accounts, retries: 2 })
     const { port } = await proxy.start()
@@ -274,8 +274,8 @@ describe('ProxyServer', () => {
     cleanups.push(() => bad.server.close(), () => good.server.close())
 
     const accounts = [
-      { id: 'hf-acct', providerKey: 'huggingface', apiKey: 'k1', modelId: 'm1', url: bad.url + '/v1' },
-      { id: 'gr-acct', providerKey: 'groq', apiKey: 'k2', modelId: 'm2', url: good.url + '/v1' },
+      { id: 'hf-acct', providerKey: 'huggingface', apiKey: 'k1', modelId: 'm1', proxyModelId: 'test', url: bad.url + '/v1' },
+      { id: 'gr-acct', providerKey: 'groq', apiKey: 'k2', modelId: 'm2', proxyModelId: 'test', url: good.url + '/v1' },
     ]
     const proxy = new ProxyServer({ port: 0, accounts, retries: 2 })
     const { port } = await proxy.start()
@@ -319,6 +319,77 @@ describe('ProxyServer', () => {
 
     const status = proxy.getStatus()
     assert.strictEqual(status.healthByAccount['hf-acct-2'].disabled, false, 'should NOT be permanently disabled')
+  })
+})
+
+// ─── Suite: ProxyServer – model-not-found routing ─────────────────────────────
+// These tests verify that requesting an unknown model returns 404 with a clear
+// message instead of silently falling back to a random account.
+
+describe('ProxyServer – model-not-found routing', () => {
+  const cleanups = []
+
+  after(async () => {
+    for (const fn of cleanups) await fn()
+  })
+
+  it('returns 404 when requested model has no accounts', async () => {
+    const upstream = await createMockUpstream(
+      { choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }
+    )
+    cleanups.push(() => upstream.server.close())
+
+    // Accounts serve 'real-model', not 'ghost-model'
+    const accounts = [
+      { id: 'acct-1', providerKey: 'p1', apiKey: 'k1', modelId: 'real-model', proxyModelId: 'real-model', url: upstream.url + '/v1' },
+    ]
+    const proxy = new ProxyServer({ port: 0, accounts })
+    const { port } = await proxy.start()
+    cleanups.push(() => proxy.stop())
+
+    const res = await makeRequest(port, { model: 'ghost-model', messages: [{ role: 'user', content: 'hi' }] })
+    assert.strictEqual(res.statusCode, 404)
+    const body = JSON.parse(res.body)
+    assert.ok(body.error, 'response must have error field')
+    assert.ok(body.message.includes('ghost-model'), 'error message must name the missing model')
+  })
+
+  it('does NOT fall back to a random account for unknown model', async () => {
+    // Accounts serve 'provider-model'. If fallback were still present, 'unknown' would use them.
+    const upstream = await createMockUpstream(
+      { choices: [{ message: { content: 'wrong' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }
+    )
+    cleanups.push(() => upstream.server.close())
+
+    const accounts = [
+      { id: 'fallback-acct', providerKey: 'p1', apiKey: 'k1', modelId: 'provider-model', proxyModelId: 'provider-model', url: upstream.url + '/v1' },
+    ]
+    const proxy = new ProxyServer({ port: 0, accounts })
+    const { port } = await proxy.start()
+    cleanups.push(() => proxy.stop())
+
+    // Requesting a model that does not exist must NOT silently return 200 from a fallback
+    const res = await makeRequest(port, { model: 'iflow/TBStars2-200B', messages: [{ role: 'user', content: 'hi' }] })
+    assert.notStrictEqual(res.statusCode, 200, 'must NOT return 200 by falling back to wrong account')
+    assert.strictEqual(res.statusCode, 404, 'must return 404 for unknown model')
+  })
+
+  it('still succeeds when fcm-proxy/ prefix is stripped and model matches', async () => {
+    const upstream = await createMockUpstream(
+      { choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }
+    )
+    cleanups.push(() => upstream.server.close())
+
+    const accounts = [
+      { id: 'acct-pfx', providerKey: 'p1', apiKey: 'k1', modelId: 'upstream-id', proxyModelId: 'my-model', url: upstream.url + '/v1' },
+    ]
+    const proxy = new ProxyServer({ port: 0, accounts })
+    const { port } = await proxy.start()
+    cleanups.push(() => proxy.stop())
+
+    // OpenCode sends "fcm-proxy/my-model" — the proxy strips the prefix before matching
+    const res = await makeRequest(port, { model: 'fcm-proxy/my-model', messages: [{ role: 'user', content: 'hi' }] })
+    assert.strictEqual(res.statusCode, 200)
   })
 })
 
@@ -443,7 +514,7 @@ describe('ProxyServer – log coherence', () => {
     const { port } = await proxy.start()
     cleanups.push(() => proxy.stop())
 
-    const res = await makeRequest(port, { model: 'test', messages: [{ role: 'user', content: 'hi' }] })
+    const res = await makeRequest(port, { model: 'bad-model', messages: [{ role: 'user', content: 'hi' }] })
     assert.strictEqual(res.statusCode, 503, 'proxy should 503 when all accounts exhausted')
 
     const entries = logCtx.readLog()
@@ -600,8 +671,8 @@ describe('ProxyServer – upstream request timeout', () => {
     cleanups.push(() => goodUpstream.server.close())
 
     const accounts = [
-      { id: 'hang-acct', providerKey: 'hang', apiKey: 'k1', modelId: 'hang-model', url: hangingUpstream.url + '/v1' },
-      { id: 'good-acct-to', providerKey: 'good', apiKey: 'k2', modelId: 'good-model', url: goodUpstream.url + '/v1' },
+      { id: 'hang-acct', providerKey: 'hang', apiKey: 'k1', modelId: 'hang-model', proxyModelId: 'test', url: hangingUpstream.url + '/v1' },
+      { id: 'good-acct-to', providerKey: 'good', apiKey: 'k2', modelId: 'good-model', proxyModelId: 'test', url: goodUpstream.url + '/v1' },
     ]
     // upstreamTimeoutMs=200ms: much shorter than the 302s real hang
     const proxy = new ProxyServer({ port: 0, accounts, retries: 2, upstreamTimeoutMs: 200 })
@@ -631,7 +702,7 @@ describe('ProxyServer – upstream request timeout', () => {
     cleanups.push(() => hangingUpstream.server.close())
 
     const accounts = [
-      { id: 'hang-only', providerKey: 'hang', apiKey: 'k1', modelId: 'hang-model', url: hangingUpstream.url + '/v1' },
+      { id: 'hang-only', providerKey: 'hang', apiKey: 'k1', modelId: 'hang-model', proxyModelId: 'test', url: hangingUpstream.url + '/v1' },
     ]
     const proxy = new ProxyServer({ port: 0, accounts, retries: 1, upstreamTimeoutMs: 150 })
     const { port } = await proxy.start()
@@ -661,7 +732,7 @@ describe('ProxyServer – upstream request timeout', () => {
     cleanups.push(() => hangingUpstream.server.close())
 
     const accounts = [
-      { id: 'hang-log-acct', providerKey: 'hang-prov', apiKey: 'k1', modelId: 'hang-model', url: hangingUpstream.url + '/v1' },
+      { id: 'hang-log-acct', providerKey: 'hang-prov', apiKey: 'k1', modelId: 'hang-model', proxyModelId: 'test', url: hangingUpstream.url + '/v1' },
     ]
     const proxy = new ProxyServer({
       port: 0, accounts, retries: 1, upstreamTimeoutMs: 150,
@@ -678,5 +749,90 @@ describe('ProxyServer – upstream request timeout', () => {
     assert.strictEqual(timeoutEntry.success, false, 'timed-out request must be logged as failed')
     assert.strictEqual(timeoutEntry.statusCode, 0, 'timeout entry must use statusCode=0 (network error)')
     assert.strictEqual(timeoutEntry.providerKey, 'hang-prov')
+  })
+})
+
+// ─── Suite: ProxyServer – SSE downstream disconnect cleanup ───────────────────
+// When the downstream client closes its connection mid-stream, the proxy MUST
+// promptly destroy the upstream request/response so the upstream connection is
+// not held open indefinitely (resource leak).
+
+describe('ProxyServer – SSE downstream disconnect cleanup', () => {
+  const cleanups = []
+
+  after(async () => {
+    for (const fn of cleanups) await fn()
+  })
+
+  it('destroys upstream request when client disconnects mid-stream', async () => {
+    // Track whether upstream connection was closed/destroyed promptly
+    let upstreamResponseClosed = false
+
+    // Keep track of active sockets so we can destroy them in cleanup
+    const activeSockets = new Set()
+
+    const streamingUpstream = await new Promise(resolve => {
+      const server = http.createServer((req, res) => {
+        // Track upstream-side response closure (pipe close propagation)
+        res.on('close', () => { upstreamResponseClosed = true })
+
+        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+        // Stream slowly — client will disconnect before the stream ends
+        let i = 0
+        const send = () => {
+          if (res.destroyed || res.writableEnded) return
+          res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: `chunk-${i}` } }] })}\n\n`)
+          i++
+          // Keep streaming until the connection closes
+          setTimeout(send, 50)
+        }
+        send()
+      })
+      server.on('connection', socket => {
+        activeSockets.add(socket)
+        socket.on('close', () => activeSockets.delete(socket))
+      })
+      server.listen(0, '127.0.0.1', () => {
+        resolve({ server, port: server.address().port, url: `http://127.0.0.1:${server.address().port}` })
+      })
+    })
+    // On cleanup: destroy active sockets to unblock server.close()
+    cleanups.push(() => {
+      for (const s of activeSockets) s.destroy()
+      return new Promise(r => streamingUpstream.server.close(r))
+    })
+
+    const accounts = [{
+      id: 'disconnect-acct', providerKey: 'test', apiKey: 'key-1',
+      modelId: 'stream-model', url: streamingUpstream.url + '/v1',
+    }]
+    const proxy = new ProxyServer({ port: 0, accounts })
+    const { port } = await proxy.start()
+    cleanups.push(() => proxy.stop())
+
+    // Make a streaming request but abort (destroy) after receiving the first chunk
+    await new Promise((resolve) => {
+      const data = JSON.stringify({ model: 'stream-model', messages: [{ role: 'user', content: 'hi' }], stream: true })
+      const req = http.request({
+        hostname: '127.0.0.1', port, method: 'POST', path: '/v1/chat/completions',
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) },
+      }, res => {
+        res.once('data', () => {
+          // Abruptly destroy the client socket — simulates downstream disconnect
+          res.destroy()
+          resolve()
+        })
+        res.on('error', () => { /* expected — we destroyed it */ resolve() })
+      })
+      req.on('error', () => resolve())
+      req.write(data)
+      req.end()
+    })
+
+    // Give the proxy a short moment to propagate the disconnect to the upstream
+    await new Promise(r => setTimeout(r, 200))
+
+    assert.strictEqual(upstreamResponseClosed, true,
+      'upstream response should have been destroyed/closed when client disconnected')
   })
 })

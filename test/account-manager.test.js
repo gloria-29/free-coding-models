@@ -263,12 +263,14 @@ describe('AccountManager', () => {
     }
   })
 
-  it('requestedModel falls back to full pool when no mapping exists', () => {
+  it('requestedModel returns null when no mapping exists (strict isolation)', () => {
     const accounts = makeAccounts(2)
     const am = new AccountManager(accounts)
+    // No account has proxyModelId or modelId matching 'non-existent-model',
+    // so selectAccount returns null (does NOT fall back to the full pool).
+    // This prevents silently serving the wrong model.
     const selected = am.selectAccount({ requestedModel: 'non-existent-model' })
-    assert.ok(selected)
-    assert.ok(selected.id === 'acct-0' || selected.id === 'acct-1')
+    assert.strictEqual(selected, null)
   })
 })
 

@@ -96,37 +96,22 @@ import { request as httpsRequest } from 'https'
 import { MODELS, sources } from '../sources.js'
 import { patchOpenClawModelsJson } from '../patch-openclaw-models.js'
 import { getAvg, getVerdict, getUptime, getP95, getJitter, getStabilityScore, sortResults, filterByTier, findBestModel, parseArgs, TIER_ORDER, VERDICT_ORDER, TIER_LETTER_MAP, scoreModelForTask, getTopRecommendations, TASK_TYPES, PRIORITY_TYPES, CONTEXT_BUDGETS, formatCtxWindow, labelFromId } from '../lib/utils.js'
-import { loadConfig, saveConfig, getApiKey, resolveApiKeys, isProviderEnabled, saveAsProfile, loadProfile, listProfiles, deleteProfile, getActiveProfileName, setActiveProfile, _emptyProfileSettings } from '../lib/config.js'
+import { loadConfig, saveConfig, getApiKey, resolveApiKeys, addApiKey, removeApiKey, isProviderEnabled, saveAsProfile, loadProfile, listProfiles, deleteProfile, getActiveProfileName, setActiveProfile, _emptyProfileSettings } from '../lib/config.js'
 import { buildMergedModels } from '../lib/model-merger.js'
 import { ProxyServer } from '../lib/proxy-server.js'
 import { loadOpenCodeConfig, saveOpenCodeConfig, syncToOpenCode, restoreOpenCodeBackup } from '../lib/opencode-sync.js'
 import { usageForRow as _usageForRow } from '../lib/usage-reader.js'
 import { loadRecentLogs } from '../lib/log-reader.js'
 import { parseOpenRouterResponse, fetchProviderQuota as _fetchProviderQuotaFromModule } from '../lib/provider-quota-fetchers.js'
+import { isKnownQuotaTelemetry } from '../lib/quota-capabilities.js'
 
 // 📖 mergedModels: cross-provider grouped model list (one entry per label, N providers each)
 // 📖 mergedModelByLabel: fast lookup map from display label → merged model entry
 const mergedModels = buildMergedModels(MODELS)
 const mergedModelByLabel = new Map(mergedModels.map(m => [m.label, m]))
 
-// 📖 Providers where quota telemetry is not publicly exposed in API responses/endpoints.
-// 📖 For these providers, Usage shows N/A unless we obtain a real quota from a live header.
-const PROVIDERS_WITHOUT_QUOTA_TELEMETRY = new Set([
-  'nvidia',
-  'deepinfra',
-  'hyperbolic',
-  'scaleway',
-  'cloudflare',
-  'perplexity',
-  'googleai',
-  'replicate',
-  'codestral',
-  'qwen',
-  'zai',
-  'iflow',
-])
-
 // 📖 Provider quota cache is managed by lib/provider-quota-fetchers.js (TTL + backoff).
+// 📖 Usage placeholder logic uses isKnownQuotaTelemetry() from lib/quota-capabilities.js.
 
 const require = createRequire(import.meta.url)
 const readline = require('readline')
@@ -272,8 +257,10 @@ function ensureTelemetryConfig(config) {
   if (!config.telemetry || typeof config.telemetry !== 'object') {
     config.telemetry = { enabled: true, anonymousId: null }
   }
-  // 📖 Always force telemetry to true, overriding any previous user choice
-  config.telemetry.enabled = true
+  // 📖 Only default enabled when unset; do not override a user's explicit opt-out
+  if (typeof config.telemetry.enabled !== 'boolean') {
+    config.telemetry.enabled = true
+  }
   if (typeof config.telemetry.anonymousId !== 'string' || !config.telemetry.anonymousId.trim()) {
     config.telemetry.anonymousId = null
   }
@@ -502,7 +489,7 @@ function runUpdate(latestVersion) {
     
     // 📖 Relaunch automatically with the same arguments
     const args = process.argv.slice(2)
-    execSync(`node bin/free-coding-models.js ${args.join(' ')}`, { stdio: 'inherit' })
+    execSync(`node ${process.argv[1]} ${args.join(' ')}`, { stdio: 'inherit' })
     process.exit(0)
   } catch (err) {
     console.log()
@@ -525,7 +512,7 @@ function runUpdate(latestVersion) {
         
         // 📖 Relaunch automatically with the same arguments
         const args = process.argv.slice(2)
-        execSync(`node bin/free-coding-models.js ${args.join(' ')}`, { stdio: 'inherit' })
+        execSync(`node ${process.argv[1]} ${args.join(' ')}`, { stdio: 'inherit' })
         process.exit(0)
       } catch (sudoErr) {
         console.log()
@@ -1489,7 +1476,9 @@ async function getProviderQuotaPercentCached(providerKey, apiKey) {
 }
 
 function usagePlaceholderForProvider(providerKey) {
-  return PROVIDERS_WITHOUT_QUOTA_TELEMETRY.has(providerKey) ? 'N/A' : '--'
+  // 📖 'N/A' for providers with no reliable quota signal (unknown telemetry type),
+  // 📖 '--' for providers that expose quota via headers or a dedicated endpoint.
+  return isKnownQuotaTelemetry(providerKey) ? '--' : 'N/A'
 }
 
 // ─── OpenCode integration ──────────────────────────────────────────────────────
@@ -2279,11 +2268,16 @@ async function ensureProxyRunning(fcmConfig, { forceRestart = false } = {}) {
 
   const existingStatus = activeProxy?.getStatus?.()
   if (existingStatus?.running === true) {
+    // Derive available slugs from the running proxy's accounts
+    const availableModelSlugs = new Set(
+      (activeProxy._accounts || []).map(a => a.proxyModelId).filter(Boolean)
+    )
     return {
       port: existingStatus.port,
       accountCount: existingStatus.accountCount,
       proxyToken: activeProxy?._proxyApiKey,
       proxyModels: null,
+      availableModelSlugs,
     }
   }
 
@@ -2297,7 +2291,8 @@ async function ensureProxyRunning(fcmConfig, { forceRestart = false } = {}) {
   const { port } = await proxy.start()
   activeProxy = proxy
 
-  return { port, accountCount: accounts.length, proxyToken, proxyModels }
+  const availableModelSlugs = new Set(accounts.map(a => a.proxyModelId).filter(Boolean))
+  return { port, accountCount: accounts.length, proxyToken, proxyModels, availableModelSlugs }
 }
 
 async function startProxyAndLaunch(model, fcmConfig) {
@@ -3088,7 +3083,8 @@ async function main() {
     // 📖 Settings screen state (P key opens it)
     settingsOpen: false,          // 📖 Whether settings overlay is active
     settingsCursor: 0,            // 📖 Which provider row is selected in settings
-    settingsEditMode: false,      // 📖 Whether we're in inline key editing mode
+    settingsEditMode: false,      // 📖 Whether we're in inline key editing mode (edit primary key)
+    settingsAddKeyMode: false,    // 📖 Whether we're in add-key mode (append a new key to provider)
     settingsEditBuffer: '',       // 📖 Typed characters for the API key being edited
     settingsErrorMsg: null,       // 📖 Temporary error message to display in settings
     settingsTestResults: {},      // 📖 { providerKey: 'pending'|'ok'|'fail'|null }
@@ -3207,16 +3203,24 @@ async function main() {
       const isCursor = i === state.settingsCursor
       const enabled = isProviderEnabled(state.config, pk)
       const keyVal = state.config.apiKeys?.[pk] ?? ''
+      // 📖 Resolve all keys for this provider (for multi-key display)
+      const allKeys = resolveApiKeys(state.config, pk)
+      const keyCount = allKeys.length
 
       // 📖 Build API key display — mask most chars, show last 4
       let keyDisplay
-      if (state.settingsEditMode && isCursor) {
-        // 📖 Inline editing: show typed buffer with cursor indicator
-        keyDisplay = chalk.cyanBright(`${state.settingsEditBuffer || ''}▏`)
-      } else if (keyVal) {
-        const visible = keyVal.slice(-4)
-        const masked = '•'.repeat(Math.min(16, Math.max(4, keyVal.length - 4)))
-        keyDisplay = chalk.dim(masked + visible)
+      if ((state.settingsEditMode || state.settingsAddKeyMode) && isCursor) {
+        // 📖 Inline editing/adding: show typed buffer with cursor indicator
+        const modePrefix = state.settingsAddKeyMode ? chalk.dim('[+] ') : ''
+        keyDisplay = chalk.cyanBright(`${modePrefix}${state.settingsEditBuffer || ''}▏`)
+      } else if (keyCount > 0) {
+        // 📖 Show the primary (first/string) key masked + count indicator for extras
+        const primaryKey = allKeys[0]
+        const visible = primaryKey.slice(-4)
+        const masked = '•'.repeat(Math.min(16, Math.max(4, primaryKey.length - 4)))
+        const keyMasked = chalk.dim(masked + visible)
+        const extra = keyCount > 1 ? chalk.cyan(` (+${keyCount - 1} more)`) : ''
+        keyDisplay = keyMasked + extra
       } else {
         keyDisplay = chalk.dim('(no key set)')
       }
@@ -4341,10 +4345,10 @@ async function main() {
       const profileStartIdx = updateRowIdx + 1
       const maxRowIdx = savedProfiles.length > 0 ? profileStartIdx + savedProfiles.length - 1 : updateRowIdx
 
-      // 📖 Edit mode: capture typed characters for the API key
-      if (state.settingsEditMode) {
+      // 📖 Edit/Add-key mode: capture typed characters for the API key
+      if (state.settingsEditMode || state.settingsAddKeyMode) {
         if (key.name === 'return') {
-          // 📖 Save the new key and exit edit mode
+          // 📖 Save the new key and exit edit/add mode
           const pk = providerKeys[state.settingsCursor]
           const newKey = state.settingsEditBuffer.trim()
           if (newKey) {
@@ -4352,19 +4356,28 @@ async function main() {
             if (pk === 'openrouter' && !newKey.startsWith('sk-or-')) {
               // 📖 Don't save corrupted keys - show warning and cancel
               state.settingsEditMode = false
+              state.settingsAddKeyMode = false
               state.settingsEditBuffer = ''
               state.settingsErrorMsg = '⚠️  OpenRouter keys must start with "sk-or-". Key not saved.'
               setTimeout(() => { state.settingsErrorMsg = null }, 3000)
               return
             }
-            state.config.apiKeys[pk] = newKey
+            if (state.settingsAddKeyMode) {
+              // 📖 Add-key mode: append new key (addApiKey handles duplicates/empty)
+              addApiKey(state.config, pk, newKey)
+            } else {
+              // 📖 Edit mode: replace the primary key (string-level)
+              state.config.apiKeys[pk] = newKey
+            }
             saveConfig(state.config)
           }
           state.settingsEditMode = false
+          state.settingsAddKeyMode = false
           state.settingsEditBuffer = ''
         } else if (key.name === 'escape') {
           // 📖 Cancel without saving
           state.settingsEditMode = false
+          state.settingsAddKeyMode = false
           state.settingsEditBuffer = ''
         } else if (key.name === 'backspace') {
           state.settingsEditBuffer = state.settingsEditBuffer.slice(0, -1)
@@ -4379,6 +4392,9 @@ async function main() {
       if (key.name === 'escape' || key.name === 'p') {
         // 📖 Close settings — rebuild results to reflect provider changes
         state.settingsOpen = false
+        state.settingsEditMode = false
+        state.settingsAddKeyMode = false
+        state.settingsEditBuffer = ''
         state.settingsSyncStatus = null  // 📖 Clear sync status on close
         // 📖 Rebuild results: add models from newly enabled providers, remove disabled
         results = MODELS
@@ -4549,6 +4565,7 @@ async function main() {
             const result = syncToOpenCode(state.config, sources, mergedModels, {
               proxyPort: started.port,
               proxyToken: started.proxyToken,
+              availableModelSlugs: started.availableModelSlugs,
             })
             state.settingsSyncStatus = {
               type: 'success',
@@ -4573,21 +4590,25 @@ async function main() {
         return
       }
 
-      // 📖 + key: add/edit API key for the selected provider (alias for Enter on provider rows)
+      // 📖 + key: open add-key input (empty buffer) — appends new key on Enter
       if ((str === '+' || key.name === '+') && state.settingsCursor < providerKeys.length) {
-        const pk = providerKeys[state.settingsCursor]
-        state.settingsEditBuffer = state.config.apiKeys?.[pk] ?? ''
-        state.settingsEditMode = true
+        state.settingsEditBuffer = ''      // 📖 Start with empty buffer (not existing key)
+        state.settingsAddKeyMode = true    // 📖 Add mode: Enter will append, not replace
+        state.settingsEditMode = false
         return
       }
 
-      // 📖 - key: remove API key for the selected provider
+      // 📖 - key: remove one key (last by default) instead of deleting entire provider
       if ((str === '-' || key.name === '-') && state.settingsCursor < providerKeys.length) {
         const pk = providerKeys[state.settingsCursor]
-        if (state.config.apiKeys) {
-          delete state.config.apiKeys[pk]
+        const removed = removeApiKey(state.config, pk)  // removes last key; collapses array-of-1 to string
+        if (removed) {
           saveConfig(state.config)
-          state.settingsSyncStatus = { type: 'success', msg: `✅ Removed API key for ${pk}` }
+          const remaining = resolveApiKeys(state.config, pk).length
+          const msg = remaining > 0
+            ? `✅ Removed one key for ${pk} (${remaining} remaining)`
+            : `✅ Removed last API key for ${pk}`
+          state.settingsSyncStatus = { type: 'success', msg }
         }
         return
       }
@@ -4600,6 +4621,7 @@ async function main() {
       state.settingsOpen = true
       state.settingsCursor = 0
       state.settingsEditMode = false
+      state.settingsAddKeyMode = false
       state.settingsEditBuffer = ''
       state.settingsScrollOffset = 0
       return

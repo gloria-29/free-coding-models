@@ -232,4 +232,46 @@ describe('TokenStats – quota snapshots', () => {
     assert.ok('byModel' in summary.quotaSnapshots)
     assert.ok('byProvider' in summary.quotaSnapshots)
   })
+
+  // ── Deferred prune ─────────────────────────────────────────────────────────
+
+  it('constructor returns before _pruneOldLogs runs (deferred via setImmediate)', async () => {
+    // Write a log file with one stale entry (older than 30 days)
+    const logFile = join(tmpDataDir, 'request-log.jsonl')
+    const staleTimestamp = new Date(Date.now() - 31 * 86400000).toISOString()
+    const staleEntry = JSON.stringify({ timestamp: staleTimestamp, accountId: 'x', modelId: 'y' })
+    writeFileSync(logFile, staleEntry + '\n')
+
+    // Construct — prune must NOT have run yet
+    const ts = new TokenStats({ dataDir: tmpDataDir })
+    const contentsBeforeTick = readFileSync(logFile, 'utf8')
+    assert.ok(contentsBeforeTick.includes(staleTimestamp),
+      'stale entry must still be present immediately after construction (prune deferred)')
+
+    // Allow the event loop to process the setImmediate callback
+    await new Promise(resolve => setImmediate(resolve))
+
+    // Now the stale entry must have been pruned
+    const contentsAfterTick = readFileSync(logFile, 'utf8')
+    assert.strictEqual(contentsAfterTick, '',
+      'stale entry must be pruned after event loop tick')
+
+    void ts // prevent unused-variable warnings
+  })
+
+  it('deferred prune retains entries within the 30-day window', async () => {
+    const logFile = join(tmpDataDir, 'request-log.jsonl')
+    const freshTimestamp = new Date(Date.now() - 1 * 86400000).toISOString() // 1 day ago
+    const freshEntry = JSON.stringify({ timestamp: freshTimestamp, accountId: 'a', modelId: 'b' })
+    writeFileSync(logFile, freshEntry + '\n')
+
+    const ts = new TokenStats({ dataDir: tmpDataDir })
+    await new Promise(resolve => setImmediate(resolve))
+
+    const contents = readFileSync(logFile, 'utf8')
+    assert.ok(contents.includes(freshTimestamp),
+      'recent entry must survive the deferred prune')
+
+    void ts
+  })
 })

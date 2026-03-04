@@ -5,12 +5,12 @@
  * Each describe block gets its own isolated temp directory via makeTempDir().
  */
 
-import { describe, it, before, after } from 'node:test'
+import { describe, it, before, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadUsageSnapshot, loadUsageMap, usageForModelId, usageForRow, SNAPSHOT_TTL_MS } from '../lib/usage-reader.js'
+import { loadUsageSnapshot, loadUsageMap, usageForModelId, usageForRow, SNAPSHOT_TTL_MS, CACHE_TTL_MS, clearUsageCache } from '../lib/usage-reader.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -35,6 +35,7 @@ describe('usage-reader – loadUsageMap', () => {
   let ctx
 
   before(() => { ctx = makeTempDir('lum') })
+  beforeEach(() => clearUsageCache())
   after(() => ctx.cleanup())
 
   it('returns empty map when file does not exist', () => {
@@ -136,6 +137,7 @@ describe('usage-reader – loadUsageSnapshot', () => {
   let ctx
 
   before(() => { ctx = makeTempDir('lus') })
+  beforeEach(() => clearUsageCache())
   after(() => ctx.cleanup())
 
   it('returns model and provider maps', () => {
@@ -162,6 +164,7 @@ describe('usage-reader – usageForModelId', () => {
   let ctx
 
   before(() => { ctx = makeTempDir('ufm') })
+  beforeEach(() => clearUsageCache())
   after(() => ctx.cleanup())
 
   it('returns null when model not in map', () => {
@@ -206,6 +209,7 @@ describe('usage-reader – usageForRow', () => {
   let ctx
 
   before(() => { ctx = makeTempDir('ufr') })
+  beforeEach(() => clearUsageCache())
   after(() => ctx.cleanup())
 
   it('prefers model-specific quota when available', () => {
@@ -242,6 +246,7 @@ describe('usage-reader – aggregation from multiple accounts (integration)', ()
   let ctx
 
   before(() => { ctx = makeTempDir('agg') })
+  beforeEach(() => clearUsageCache())
   after(() => ctx.cleanup())
 
   it('byModel quotaPercent reflects average of multiple accounts sharing a model', () => {
@@ -270,6 +275,7 @@ describe('usage-reader – snapshot freshness TTL', () => {
   let ctx
 
   before(() => { ctx = makeTempDir('ttl') })
+  beforeEach(() => clearUsageCache())
   after(() => ctx.cleanup())
 
   it('exports SNAPSHOT_TTL_MS as a positive number (30 minutes)', () => {
@@ -415,5 +421,149 @@ describe('usage-reader – snapshot freshness TTL', () => {
     })
     const result = usageForModelId('some-model', ctx.statsFile)
     assert.strictEqual(result, null, 'stale model snapshot must return null from usageForModelId')
+  })
+})
+
+// ─── Suite: module-level cache (Task 4) ──────────────────────────────────────
+
+describe('usage-reader – module-level parse cache', () => {
+  let ctx
+
+  before(() => { ctx = makeTempDir('cache') })
+  after(() => ctx.cleanup())
+
+  it('exports CACHE_TTL_MS as a positive number between 500ms and 1000ms', () => {
+    assert.ok(typeof CACHE_TTL_MS === 'number', 'CACHE_TTL_MS must be a number')
+    assert.ok(CACHE_TTL_MS >= 500, 'CACHE_TTL_MS must be at least 500ms')
+    assert.ok(CACHE_TTL_MS <= 1000, 'CACHE_TTL_MS must be at most 1000ms')
+  })
+
+  it('exports clearUsageCache as a function', () => {
+    assert.ok(typeof clearUsageCache === 'function', 'clearUsageCache must be exported as a function')
+  })
+
+  it('returns cached result on second call without rereading disk (same content)', () => {
+    clearUsageCache()
+    ctx.write({
+      quotaSnapshots: {
+        byModel: { 'cached-model': { quotaPercent: 33, updatedAt: freshTs() } },
+        byProvider: {},
+      },
+    })
+
+    const first = loadUsageMap(ctx.statsFile)
+    assert.strictEqual(first['cached-model'], 33, 'first call must return the value')
+
+    // Overwrite the file on disk — the cache should shield the second call
+    ctx.write({
+      quotaSnapshots: {
+        byModel: { 'cached-model': { quotaPercent: 99, updatedAt: freshTs() } },
+        byProvider: {},
+      },
+    })
+
+    const second = loadUsageMap(ctx.statsFile)
+    assert.strictEqual(second['cached-model'], 33, 'second call within CACHE_TTL_MS must return cached value, not updated disk value')
+  })
+
+  it('clearUsageCache forces re-read from disk on next call', () => {
+    clearUsageCache()
+    ctx.write({
+      quotaSnapshots: {
+        byModel: { 'refresh-model': { quotaPercent: 10, updatedAt: freshTs() } },
+        byProvider: {},
+      },
+    })
+
+    const first = loadUsageMap(ctx.statsFile)
+    assert.strictEqual(first['refresh-model'], 10, 'first call returns initial value')
+
+    // Update disk content
+    ctx.write({
+      quotaSnapshots: {
+        byModel: { 'refresh-model': { quotaPercent: 20, updatedAt: freshTs() } },
+        byProvider: {},
+      },
+    })
+
+    // Without clearing, still cached
+    const stillCached = loadUsageMap(ctx.statsFile)
+    assert.strictEqual(stillCached['refresh-model'], 10, 'before clearUsageCache, must still return cached value')
+
+    // After clearing, must re-read from disk
+    clearUsageCache()
+    const afterClear = loadUsageMap(ctx.statsFile)
+    assert.strictEqual(afterClear['refresh-model'], 20, 'after clearUsageCache, must re-read from disk')
+  })
+
+  it('cache is keyed by statsFile path — different paths have independent caches', () => {
+    clearUsageCache()
+    const ctx2 = makeTempDir('cache2')
+
+    try {
+      ctx.write({
+        quotaSnapshots: {
+          byModel: { 'model-path-a': { quotaPercent: 11, updatedAt: freshTs() } },
+          byProvider: {},
+        },
+      })
+      ctx2.write({
+        quotaSnapshots: {
+          byModel: { 'model-path-b': { quotaPercent: 22, updatedAt: freshTs() } },
+          byProvider: {},
+        },
+      })
+
+      const mapA = loadUsageMap(ctx.statsFile)
+      const mapB = loadUsageMap(ctx2.statsFile)
+
+      assert.strictEqual(mapA['model-path-a'], 11, 'path A must have its own cached value')
+      assert.ok(!('model-path-b' in mapA), 'path A cache must not bleed into path B')
+      assert.strictEqual(mapB['model-path-b'], 22, 'path B must have its own cached value')
+      assert.ok(!('model-path-a' in mapB), 'path B cache must not bleed into path A')
+    } finally {
+      ctx2.cleanup()
+    }
+  })
+
+  it('cache expiry after CACHE_TTL_MS causes re-read from disk', async () => {
+    clearUsageCache()
+    ctx.write({
+      quotaSnapshots: {
+        byModel: { 'expiry-model': { quotaPercent: 41, updatedAt: freshTs() } },
+        byProvider: {},
+      },
+    })
+
+    const first = loadUsageMap(ctx.statsFile)
+    assert.strictEqual(first['expiry-model'], 41, 'first call returns initial value')
+
+    // Wait for the cache TTL to expire (CACHE_TTL_MS + small buffer)
+    await new Promise((resolve) => setTimeout(resolve, CACHE_TTL_MS + 100))
+
+    // Update disk content after TTL has elapsed
+    ctx.write({
+      quotaSnapshots: {
+        byModel: { 'expiry-model': { quotaPercent: 99, updatedAt: freshTs() } },
+        byProvider: {},
+      },
+    })
+
+    const afterExpiry = loadUsageMap(ctx.statsFile)
+    assert.strictEqual(afterExpiry['expiry-model'], 99, 'after CACHE_TTL_MS, must re-read from disk')
+  })
+
+  it('30-minute data freshness (SNAPSHOT_TTL_MS) is preserved even when cache is active', () => {
+    clearUsageCache()
+    const staleTime = new Date(Date.now() - 31 * 60 * 1000).toISOString()
+    ctx.write({
+      quotaSnapshots: {
+        byModel: { 'stale-cached-model': { quotaPercent: 77, updatedAt: staleTime } },
+        byProvider: {},
+      },
+    })
+
+    const map = loadUsageMap(ctx.statsFile)
+    assert.ok(!('stale-cached-model' in map), 'stale data must still be excluded even when result is cached')
   })
 })

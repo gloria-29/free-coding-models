@@ -2,27 +2,32 @@
 
 ---
 
-## 0.1.84
+## 0.1.83 (hardening patch)
+
+> Robustness fixes applied on top of 0.1.83: telemetry opt-out is now respected, the auto-updater relaunch uses an absolute path, SSE client disconnects clean up upstream connections, startup log pruning is deferred off the critical path, usage snapshots are cached to avoid per-render disk reads, and the TUI placeholder logic (`N/A` vs `--`) uses the canonical `isKnownQuotaTelemetry()` helper from `lib/quota-capabilities.js` instead of a duplicated set.
 
 ### Fixed
 
-- **Proxy upstream timeout** — `ProxyServer` now enforces a 120-second timeout on every upstream HTTP request (`upstreamTimeoutMs`, default 120 000 ms). Previously the proxy would hang for the full upstream timeout (up to 302 s for nvidia NIM 504s), making OpenCode appear to receive nothing. The timed-out attempt is now treated as a network error and retried against the next available account.
-- **501 for unsupported OpenAI paths** — `POST /v1/completions` and `POST /v1/responses` now return `501 Not Implemented` (with a clear error message pointing to `/v1/chat/completions`) instead of a silent `404 Not Found`.
+- **Telemetry opt-out respected** — `ensureTelemetryConfig` no longer forces `enabled: true` when the user has explicitly set `enabled: false`. First-run default (unset) still initialises to `true`.
+- **Auto-updater relaunch absolute path** — both normal and sudo-retry relaunch paths now use `process.argv[1]` (absolute) instead of the relative `bin/free-coding-models.js`, fixing relaunch failures when the tool is run from a different working directory.
+- **SSE client-disconnect cleanup** — `ProxyServer` now registers a `clientRes.on('close')` listener on SSE streams that destroys both the upstream request and response when the downstream client disconnects, preventing upstream connection leaks.
 
-### Added
+### Changed
 
-- **7 new tests** — upstream-timeout suite (3 tests) and unsupported-paths suite (4 tests) in `test/proxy-server.test.js`; all 220 tests pass.
+- **Deferred startup log prune** — `TokenStats` constructor calls `_pruneOldLogs()` via `setImmediate` instead of synchronously, keeping constructor latency minimal.
+- **Usage snapshot cache** — `lib/usage-reader.js` maintains a module-level 750 ms parse cache keyed by stats-file path; repeated TUI renders within the same animation frame no longer each hit the disk. A new `clearUsageCache()` export allows tests to evict the cache deterministically.
+- **Canonical telemetry source in TUI** — removed the hardcoded `PROVIDERS_WITHOUT_QUOTA_TELEMETRY` set from `bin/free-coding-models.js`; `usagePlaceholderForProvider()` now delegates to `isKnownQuotaTelemetry()` from `lib/quota-capabilities.js` — single source of truth.
 
 ---
 
 ## 0.1.83
 
-> Integrates upstream v0.1.82 (URL fixes, OpenRouter key validation) and extends the fork with usage observability, quota polling, and proxy log hardening.
+> Integrates upstream v0.1.82 (URL fixes, OpenRouter key validation) and extends the fork with usage observability, quota polling, proxy log hardening, upstream timeout enforcement, and 501 responses for unsupported paths.
 
 ### Added
 
 - **Multi-account rotation proxy** — start a local OpenAI-compatible proxy (`bin/free-coding-models.js --proxy`) that load-balances requests across multiple API keys per provider using Power-of-Two-Choices (P2C) routing. Automatically retries on quota errors, respects per-key circuit breakers, and tracks token usage per account.
-- **Multiple API keys per provider** — `apiKey` in config now accepts a string, array, or `{ keys: [...], strategy: "round-robin"|"random"|"p2c" }` object; backward-compatible with all existing single-key configs.
+- **Multiple API keys per provider** — `apiKey` in config now accepts a string or an array of strings; backward-compatible with all existing single-key configs. The proxy distributes requests across all configured keys using P2C routing.
 - **AccountManager** (`lib/account-manager.js`) — P2C-based key selection, per-key health tracking, quota detection, sticky sessions (same key within a request chain), and cooldown/recovery logic.
 - **ErrorClassifier** (`lib/error-classifier.js`) — classifies API errors into quota, auth, rate-limit, or transient categories; drives circuit-breaker open/close decisions.
 - **RequestTransformer** (`lib/request-transformer.js`) — per-model thinking budget injection and context compression (truncates oldest messages when context exceeds threshold).
@@ -30,15 +35,18 @@
 - **TokenStats** (`lib/token-stats.js`) — rolling per-model / per-key token usage counters used by the proxy and TUI stats view.
 - **Model merger** (`lib/model-merger.js`) — `buildMergedModels()` groups cross-provider models (same base model available from multiple providers) into a single merged entry for display.
 - **OpenCode sync** (`lib/opencode-sync.js`) — `syncToOpenCode()` merges FCM-managed providers into `opencode.json` without overwriting user settings; creates a timestamped backup before every write.
-- **Settings overlay enhancements** — inside the Settings page (P key), new keybinds: **S** syncs FCM providers to OpenCode config, **R** restores the last backup, **+**/**-** cycle through configured API keys for the current provider, with masked key display (first 4 + `***` + last 3 chars).
+- **Settings overlay enhancements** — inside the Settings page (P key), new keybinds: **S** syncs FCM providers to OpenCode config, **R** restores the last backup, **+** opens an empty input to append a new API key (supports multiple keys per provider), **-** removes the last configured key (collapses array-of-1 back to string; deletes when empty), **Enter** edits the primary key. Provider rows display the masked primary key plus a `(+N more)` indicator when multiple keys are configured.
 - **TUI proxy controls** — **X** key starts/stops the embedded proxy server; proxy address and live token-usage counters are shown in the status bar while the proxy is running.
 - **Merged model view** — the main model table can now display cross-provider merged entries, showing all available provider variants for a model in a single row.
 - **Usage observability & Logs page** — structured NDJSON request log written by the proxy; new TUI Logs page shows recent proxy requests with status, model, tokens, and latency.
 - **Provider quota pollers** (`lib/provider-quota-fetchers.js`) — TTL-cached quota checks for OpenRouter and SiliconFlow; replaces inline fetch logic; injectable fetch for deterministic tests.
 - **Proxy log coherence** — `ProxyServer` now records every upstream attempt (success and failure) in `TokenStats` with consistent fields (`success`, `statusCode`, `tokens`, `latency`); no attempt goes unlogged.
+- **7 new tests** — upstream-timeout suite (3 tests) and unsupported-paths suite (4 tests) in `test/proxy-server.test.js`.
 
 ### Fixed
 
+- **Proxy upstream timeout** — `ProxyServer` now enforces a 120-second timeout on every upstream HTTP request (`upstreamTimeoutMs`, default 120 000 ms). Previously the proxy would hang for the full upstream timeout (up to 302 s for nvidia NIM 504s), making OpenCode appear to receive nothing. The timed-out attempt is now treated as a network error and retried against the next available account.
+- **501 for unsupported OpenAI paths** — `POST /v1/completions` and `POST /v1/responses` now return `501 Not Implemented` (with a clear error message pointing to `/v1/chat/completions`) instead of a silent `404 Not Found`.
 - **Alibaba Cloud URL** — updated from deprecated `dashscope.console.alibabacloud.com` to active `modelstudio.console.alibabacloud.com` (rebranded to Model Studio). *(upstream v0.1.82)*
 - **SambaNova URL** — updated from broken `sambanova.ai/developers` to active `cloud.sambanova.ai/apis` (SambaCloud portal). *(upstream v0.1.82)*
 - **OpenRouter key corruption** — added validation to detect and prevent saving OpenRouter keys that don't start with `sk-or-` prefix. *(upstream v0.1.82)*

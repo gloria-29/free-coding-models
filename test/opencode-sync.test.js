@@ -392,3 +392,67 @@ describe('mergeOcConfig — fallback to existing provider options', () => {
     assert.ok(fcmModels['new-slug-2'], 'new-slug-2 should be present')
   })
 })
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📖 4. AVAILABLE MODEL SLUGS FILTERING (ghost model prevention)
+// ═══════════════════════════════════════════════════════════════════════════════
+describe('mergeOcConfig — availableModelSlugs filtering', () => {
+  it('includes only slugs present in availableModelSlugs when provided as Set', () => {
+    const oc = baseOcConfig()
+    const models = [
+      { slug: 'has-key', label: 'Has Key' },
+      { slug: 'no-key', label: 'No Key (ghost)' },
+      { slug: 'also-has-key', label: 'Also Has Key' },
+    ]
+    mergeOcConfig(oc, models, { availableModelSlugs: new Set(['has-key', 'also-has-key']) })
+    const fcmModels = oc.provider['fcm-proxy'].models
+    assert.ok(fcmModels['has-key'], 'has-key should be included')
+    assert.ok(fcmModels['also-has-key'], 'also-has-key should be included')
+    assert.ok(!fcmModels['no-key'], 'no-key (ghost) should be excluded')
+  })
+
+  it('includes only slugs present in availableModelSlugs when provided as Array', () => {
+    const oc = baseOcConfig()
+    const models = [
+      { slug: 'real-1', label: 'Real 1' },
+      { slug: 'ghost-1', label: 'Ghost 1' },
+    ]
+    mergeOcConfig(oc, models, { availableModelSlugs: ['real-1'] })
+    const fcmModels = oc.provider['fcm-proxy'].models
+    assert.ok(fcmModels['real-1'], 'real-1 should be present')
+    assert.ok(!fcmModels['ghost-1'], 'ghost-1 should be excluded')
+  })
+
+  it('includes all models when availableModelSlugs is not provided', () => {
+    const oc = baseOcConfig()
+    const models = mockMergedModels(3)
+    mergeOcConfig(oc, models) // no availableModelSlugs
+    const fcmModels = oc.provider['fcm-proxy'].models
+    assert.strictEqual(Object.keys(fcmModels).length, 3, 'all 3 models should be included when no filter')
+  })
+
+  it('results in zero models when no models match availableModelSlugs', () => {
+    const oc = baseOcConfig()
+    const models = [
+      { slug: 'iflow-model', label: 'iFlow Model' },
+      { slug: 'qwen-model', label: 'Qwen Model' },
+    ]
+    mergeOcConfig(oc, models, { availableModelSlugs: new Set(['nvidia-model', 'groq-model']) })
+    const fcmModels = oc.provider['fcm-proxy'].models
+    assert.strictEqual(Object.keys(fcmModels).length, 0, 'no models should appear when none match')
+  })
+
+  it('reflects filtered model count in returned config', () => {
+    const oc = baseOcConfig()
+    const models = Array.from({ length: 10 }, (_, i) => ({ slug: `m${i}`, label: `Model ${i}` }))
+    const available = new Set(['m0', 'm3', 'm7'])
+    mergeOcConfig(oc, models, { availableModelSlugs: available })
+    const fcmModels = oc.provider['fcm-proxy'].models
+    assert.strictEqual(Object.keys(fcmModels).length, 3)
+    assert.ok(fcmModels['m0'])
+    assert.ok(fcmModels['m3'])
+    assert.ok(fcmModels['m7'])
+    assert.ok(!fcmModels['m1'])
+    assert.ok(!fcmModels['m9'])
+  })
+})
