@@ -8,6 +8,22 @@
 
 - 🔌 Added `terminalcp` MCP server configuration for Claude Code to spawn and interact with the TUI headlessly. Agents can now visually test the terminal interface by capturing output and sending keystrokes programmatically. See AGENTS.md → "Testing the TUI with terminalcp" for usage.
 
+- 🎨 **Added consistent branding header to all overlays** - Each overlay (Settings, Help, Log, Install Endpoints, Recommend, Feature Request, Bug Report) now displays:
+  - Free-coding-models logo with rocket emoji (🚀)
+  - Version number display
+  - Clean title on a separate line
+  - Consistent visual styling across all screens
+  - **Main table title now uses rocket emoji (🚀) and cyanBright color** for consistency with overlays
+
+### Changed
+
+- 📊 **Improved ping progress visibility** - Moved ping completion counter from the W badge to the main status bar:
+  - Now shows as `📦 49/59` next to model status counts (up/timeout/down)
+  - More prominent placement makes it easier to see ping progress at a glance
+  - W badge still shows interval, mode, and countdown to next ping
+
+- 🧹 **Removed unnecessary blank line** - Overlays (Settings P, Help K, Log X) no longer have a blank line at the top, giving more vertical space for content
+
 ### Fixed
 
 - 🖥️ **Overlays now use 100% terminal width** - All overlays (Settings P, Help K, Log X, Recommend Q, Feature J, Bug I) now dynamically adapt to full terminal width instead of fixed 116-column panels:

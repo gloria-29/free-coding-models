@@ -227,7 +227,8 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   const sorted = sortResultsWithPinnedFavorites(visibleResults, sortColumn, sortDirection)
 
   const lines = [
-    `  ${chalk.greenBright.bold(`✅ Free-Coding-Models v${LOCAL_VERSION}`)}${modeBadge}${pingControlBadge}${tierBadge}${originBadge}${configuredBadge}${profileBadge}${chalk.reset('')}   ` +
+    `  ${chalk.cyanBright.bold(`🚀 free-coding-models v${LOCAL_VERSION}`)}${modeBadge}${pingControlBadge}${tierBadge}${originBadge}${configuredBadge}${profileBadge}${chalk.reset('')}   ` +
+      chalk.dim('📦 ') + chalk.cyanBright.bold(`${completedPings}/${totalVisible}`) + chalk.dim('  ') +
       chalk.greenBright(`✅ ${up}`) + chalk.dim(' up  ') +
       chalk.yellow(`⏳ ${timeout}`) + chalk.dim(' timeout  ') +
       chalk.red(`❌ ${down}`) + chalk.dim(' down  ') +

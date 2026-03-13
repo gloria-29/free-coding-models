@@ -108,8 +108,8 @@ export const PROVIDER_METADATA = {
     color: chalk.rgb(225, 190, 231),
     signupUrl: 'https://openrouter.ai/keys',
     signupHint: 'API Keys → Create',
-    rateLimits: '50 req/day, 20/min (:free shared quota)',
-    detailedLimits: 'No credits (or < $10) → 50 requests/day (20 req/min)\n≥ $10 in credits → 1000 requests/day (20 req/min)\n• Free models (:free) never consume credits\n• Failed requests count toward quota\n• Quota resets daily at midnight UTC\n• Free-tier models may be rate-limited during peak hours',
+    rateLimits: 'Free on :free: 50/day <$10, 1000/day ≥$10 (20 req/min)',
+    detailedLimits: 'No credits (or <$10) → 50 requests/day (20 req/min)\n≥ $10 in credits → 1000 requests/day (20 req/min)\n• Free models (:free) never consume credits\n• Failed requests count toward quota\n• Quota resets daily at midnight UTC\n• Free-tier models may be rate-limited during peak hours',
   },
   huggingface: {
     label: 'Hugging Face Inference',

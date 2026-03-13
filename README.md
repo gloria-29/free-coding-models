@@ -107,21 +107,35 @@ Before using `free-coding-models`, make sure you have:
    - **Groq** — [console.groq.com/keys](https://console.groq.com/keys) → Create API Key
    - **Cerebras** — [cloud.cerebras.ai](https://cloud.cerebras.ai) → API Keys → Create
    - **SambaNova** — [sambanova.ai/developers](https://sambanova.ai/developers) → Developers portal → API key (dev tier generous)
-   - **OpenRouter** — [openrouter.ai/keys](https://openrouter.ai/keys) → Create key (50 req/day, 20/min on `:free`)
+   - **OpenRouter** — [openrouter.ai/keys](https://openrouter.ai/keys) → Create key (free requests on `:free` models, see details below)
 
-### OpenRouter — Free requests on free models (:free)
+### OpenRouter Free Tier Details
 
-───────────────────────────────────────────────────
-No credits (or < $10) → 50 requests / day (20 req/min)
-≥ $10 in credits → 1000 requests / day (20 req/min)
-───────────────────────────────────────────────────
+OpenRouter provides free requests on free models (`:free`):
 
+```
+──────────────────────────────────────────────────
+  OpenRouter — Free requests on free models (:free)
+──────────────────────────────────────────────────
+
+  No credits (or <$10)   →   50  requests / day   (20 req/min)
+  ≥ $10 in credits      →  1000 requests / day   (20 req/min)
+
+──────────────────────────────────────────────────
 Key things to know:
-• Free models (:free) never consume your credits. Your $10 stays untouched if you only use :free models.
-• Failed requests still count toward your daily quota.
-• Quota resets every day at midnight UTC.
-• Free-tier popular models may be additionally rate-limited by the provider itself during peak hours.
-───────────────────────────────────────────────────
+
+  • Free models (:free) never consume your credits.
+    Your $10 stays untouched if you only use :free models.
+
+  • Failed requests still count toward your daily quota.
+
+  • Quota resets every day at midnight UTC.
+
+  • Free-tier popular models may be additionally rate-limited
+    by the provider itself during peak hours.
+──────────────────────────────────────────────────
+```
+
    - **Hugging Face Inference** — [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) → Access Tokens (free monthly credits)
    - **Replicate** — [replicate.com/account/api-tokens](https://replicate.com/account/api-tokens) → Create token (dev quota)
    - **DeepInfra** — [deepinfra.com/login](https://deepinfra.com/login) → Login → API key (free dev tier)
@@ -255,7 +269,7 @@ Press **`P`** to open the Settings screen at any time:
   Providers
 
   ❯ [ ✅ ] NVIDIA NIM              nvapi-••••••••••••3f9a  [Test ✅]  Free tier (provider quota by model)
-    [ ✅ ] OpenRouter              (no key set)            [Test —]   50 req/day, 20/min (:free shared quota)
+    [ ✅ ] OpenRouter              (no key set)            [Test —]   Free on :free (50/day <$10, 1000/day ≥$10)
     [ ✅ ] Hugging Face Inference  (no key set)            [Test —]   Free monthly credits (~$0.10)
 
   Setup Instructions — NVIDIA NIM

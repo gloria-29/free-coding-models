@@ -104,12 +104,15 @@ export function createOverlayRenderers(state, deps) {
     const lines = []
     const cursorLineByRow = {}
 
-    lines.push('')
-    lines.push(`  ${chalk.bold('⚙  Settings')}  ${chalk.dim('— free-coding-models v' + LOCAL_VERSION)}`)
+    // 📖 Branding header
+    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${chalk.bold('⚙  Settings')}`)
+
     if (state.settingsErrorMsg) {
       lines.push(`  ${chalk.red.bold(state.settingsErrorMsg)}`)
+      lines.push('')
     }
-    lines.push('')
+
     lines.push(`  ${chalk.bold('🧩 Providers')}`)
     // 📖 Dynamic separator line using 100% terminal width
     const separatorWidth = Math.max(20, state.terminalCols - 10)
@@ -346,7 +349,11 @@ export function createOverlayRenderers(state, deps) {
       : '—'
 
     lines.push('')
-    lines.push(`  ${chalk.bold('🔌 Install Endpoints')}  ${chalk.dim('— install provider catalogs into supported coding tools')}`)
+    // 📖 Branding header
+    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${chalk.bold('🔌 Install Endpoints')}`)
+    lines.push('')
+    lines.push(chalk.dim('  — install provider catalogs into supported coding tools'))
     if (state.installEndpointsErrorMsg) {
       lines.push(`  ${chalk.yellow(state.installEndpointsErrorMsg)}`)
     }
@@ -476,9 +483,12 @@ export function createOverlayRenderers(state, deps) {
   function renderHelp() {
     const EL = '\x1b[K'
     const lines = []
+
+    // 📖 Branding header
+    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${chalk.bold('❓ Help & Keyboard Shortcuts')}`)
     lines.push('')
-    lines.push(`  ${chalk.bold('❓ Keyboard Shortcuts')}  ${chalk.dim('— ↑↓ / PgUp / PgDn / Home / End scroll • K or Esc close')}`)
-    lines.push('')
+    lines.push(`  ${chalk.dim('— ↑↓ / PgUp / PgDn / Home / End scroll • K or Esc close')}`)
     lines.push(`  ${chalk.bold('Columns')}`)
     lines.push('')
     lines.push(`  ${chalk.cyan('Rank')}        SWE-bench rank (1 = best coding score)  ${chalk.dim('Sort:')} ${chalk.yellow('R')}`)
@@ -597,11 +607,14 @@ export function createOverlayRenderers(state, deps) {
   function renderLog() {
     const EL = '\x1b[K'
     const lines = []
+
+    // 📖 Branding header
+    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${chalk.bold('📋 Request Log')}`)
     lines.push('')
-    lines.push(`  ${chalk.bold('📋 Request Log')}  ${chalk.dim('— recent requests • ↑↓ scroll • X or Esc close')}`)
+    lines.push(chalk.dim('  — recent requests • ↑↓ scroll • X or Esc close'))
     lines.push(chalk.dim('  Works only when the multi-account proxy is enabled and requests go through it.'))
     lines.push(chalk.dim('  Direct provider launches do not currently write into this log.'))
-    lines.push('')
 
     // 📖 Load recent log entries — bounded read, newest-first, malformed lines skipped.
     const logRows = loadRecentLogs({ limit: 200 })
@@ -703,8 +716,12 @@ export function createOverlayRenderers(state, deps) {
     const EL = '\x1b[K'
     const lines = []
 
+    // 📖 Branding header
     lines.push('')
-    lines.push(`  ${chalk.bold('🎯 Smart Recommend')}  ${chalk.dim('— find the best model for your task')}`)
+    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${chalk.bold('🎯 Smart Recommend')}`)
+    lines.push('')
+    lines.push(chalk.dim('  — find the best model for your task'))
     lines.push('')
 
     if (state.recommendPhase === 'questionnaire') {
@@ -903,8 +920,8 @@ export function createOverlayRenderers(state, deps) {
     const EL = '\x1b[K'
     const lines = []
 
-    // 📖 Calculate available space for multi-line input
-    const maxInputWidth = OVERLAY_PANEL_WIDTH - 8 // 8 = padding (4 spaces each side)
+    // 📖 Calculate available space for multi-line input (dynamic based on terminal width)
+    const maxInputWidth = state.terminalCols - 8 // 8 = padding (4 spaces each side)
     const maxInputLines = 10 // Show up to 10 lines of input
     
     // 📖 Split buffer into lines for display (with wrapping)
@@ -928,10 +945,13 @@ export function createOverlayRenderers(state, deps) {
 
     const inputLines = wrapText(state.featureRequestBuffer, maxInputWidth)
     const displayLines = inputLines.slice(0, maxInputLines)
-    
-    // 📖 Header
+
+    // 📖 Branding header
     lines.push('')
-    lines.push(`  ${chalk.bold.rgb(57, 255, 20)('📝 Feature Request')}  ${chalk.dim('— send anonymous feedback to the project team')}`)
+    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${chalk.bold.rgb(57, 255, 20)('📝 Feature Request')}`)
+    lines.push('')
+    lines.push(chalk.dim('  — send anonymous feedback to the project team'))
     lines.push('')
     
     // 📖 Status messages (if any)
@@ -1007,8 +1027,8 @@ export function createOverlayRenderers(state, deps) {
     const EL = '\x1b[K'
     const lines = []
 
-    // 📖 Calculate available space for multi-line input
-    const maxInputWidth = OVERLAY_PANEL_WIDTH - 8 // 8 = padding (4 spaces each side)
+    // 📖 Calculate available space for multi-line input (dynamic based on terminal width)
+    const maxInputWidth = state.terminalCols - 8 // 8 = padding (4 spaces each side)
     const maxInputLines = 10 // Show up to 10 lines of input
     
     // 📖 Split buffer into lines for display (with wrapping)
@@ -1032,10 +1052,13 @@ export function createOverlayRenderers(state, deps) {
 
     const inputLines = wrapText(state.bugReportBuffer, maxInputWidth)
     const displayLines = inputLines.slice(0, maxInputLines)
-    
-    // 📖 Header
+
+    // 📖 Branding header
     lines.push('')
-    lines.push(`  ${chalk.bold.rgb(255, 87, 51)('🐛 Bug Report')}  ${chalk.dim('— send anonymous bug reports to the project team')}`)
+    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${chalk.bold.rgb(255, 87, 51)('🐛 Bug Report')}`)
+    lines.push('')
+    lines.push(chalk.dim('  — send anonymous bug reports to the project team'))
     lines.push('')
     
     // 📖 Status messages (if any)
