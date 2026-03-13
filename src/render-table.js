@@ -59,7 +59,8 @@ const { version: LOCAL_VERSION } = require('../package.json')
 
 // 📖 Provider column palette: soft pastel rainbow so each provider stays easy
 // 📖 to spot without turning the table into a harsh neon wall.
-const PROVIDER_COLOR = {
+// 📖 Exported for use in overlays (settings screen) and logs.
+export const PROVIDER_COLOR = {
   nvidia: [178, 235, 190],
   groq: [255, 204, 188],
   cerebras: [179, 229, 252],

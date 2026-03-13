@@ -2,6 +2,30 @@
 
 ---
 
+## 0.2.7
+
+### Added
+
+- 📊 **Added `--json` flag for scriptable output** - Output model results as JSON for automation, CI/CD, and monitoring dashboards. Example: `free-coding-models --tier S --json | jq '.[0].modelId'`
+
+- 💾 **Added persistent ping cache** - Cache ping results for 5 minutes to speed up subsequent runs:
+  - Cache stored in `~/.free-coding-models.cache.json`
+  - Automatic cache refresh on startup if stale
+  - Saves API rate limits and reduces wait time
+  - Cache is saved on exit for next run
+
+- 🔐 **Added config file security check with auto-fix** - Warns if `~/.free-coding-models.json` has insecure permissions:
+  - Checks file permissions on startup
+  - Warns if file is readable by others (security risk)
+  - Offers one-click auto-fix with `chmod 600`
+  - Shows manual fix command if auto-fix fails or is declined
+
+### Changed
+
+- 📝 **Updated documentation** - Added `--json` flag to CLI flags table in README.md
+
+---
+
 ## 0.2.6
 
 ### Added

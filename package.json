@@ -1,6 +1,6 @@
 {
   "name": "free-coding-models",
-  "version": "0.2.5",
+  "version": "0.2.7",
   "description": "Find the fastest coding LLM models in seconds — ping free models from multiple providers, pick the best one for OpenCode, Cursor, or any AI coding assistant.",
   "keywords": [
     "nvidia",
@@ -45,7 +45,8 @@
     "patch-openclaw.js",
     "patch-openclaw-models.js",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "start": "node bin/free-coding-models.js",

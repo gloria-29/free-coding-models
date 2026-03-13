@@ -39,6 +39,7 @@ import { MODELS, sources } from '../sources.js'
 import { findBestModel, filterByTier, formatCtxWindow, labelFromId, TIER_LETTER_MAP } from '../src/utils.js'
 import { isProviderEnabled, getApiKey } from '../src/config.js'
 import { ping } from '../src/ping.js'
+import { PROVIDER_COLOR } from '../src/render-table.js'
 import chalk from 'chalk'
 
 // 📖 runFiableMode: Analyze models for reliability over 10 seconds, output the best one.
@@ -99,7 +100,10 @@ export async function runFiableMode(config) {
   // 📖 Output in format: providerName/modelId
   const providerName = sources[best.providerKey]?.name ?? best.providerKey ?? 'nvidia'
   console.log(chalk.green(`  ✓ Most reliable model:`))
-  console.log(chalk.bold(`    ${providerName}/${best.modelId}`))
+  // 📖 Color provider name the same way as in the main table
+  const providerRgb = PROVIDER_COLOR[best.providerKey] ?? [105, 190, 245]
+  const coloredProviderName = chalk.bold.rgb(...providerRgb)(providerName)
+  console.log(`    ${coloredProviderName}/${best.modelId}`)
   console.log()
   console.log(chalk.dim(`  📊 Stats:`))
   const { getAvg, getUptime } = await import('./utils.js')

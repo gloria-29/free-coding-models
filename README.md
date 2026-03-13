@@ -174,6 +174,16 @@ pnpx free-coding-models YOUR_API_KEY
 bunx free-coding-models YOUR_API_KEY
 ```
 
+### 🆕 What's New
+
+**Version 0.2.7 brings three powerful new features:**
+
+- **`--json` flag** — Output model results as JSON for scripting, CI/CD pipelines, and monitoring dashboards. Perfect for automation: `free-coding-models --tier S --json | jq '.[0].modelId'`
+
+- **Persistent ping cache** — Results are cached for 5 minutes between runs. Startup is nearly instant when cache is fresh, and you save API rate limits. Cache file: `~/.free-coding-models.cache.json`
+
+- **Config security check** — Automatically warns if your API key config file has insecure permissions and offers one-click auto-fix with `chmod 600`
+
 ---
 
 ## 🚀 Usage
@@ -201,6 +211,11 @@ free-coding-models --best
  # Analyze for 10 seconds and output the most reliable model
  free-coding-models --fiable
 
+ # Output results as JSON (for scripting/automation)
+free-coding-models --json
+free-coding-models --tier S --json | jq '.[0].modelId'  # Get fastest S-tier model ID
+free-coding-models --json | jq '.[] | select(.avgPing < 500)'  # Filter by latency
+
  # Filter models by tier letter
 free-coding-models --tier S          # S+ and S only
 free-coding-models --tier A          # A+, A, A- only
@@ -210,6 +225,7 @@ free-coding-models --tier C          # C only
 # Combine flags freely
 free-coding-models --openclaw --tier S
 free-coding-models --opencode --best
+free-coding-models --tier S --json
 ```
 
 ### Choosing the target tool
@@ -862,6 +878,7 @@ This script:
 | `--goose` | Goose mode — Enter launches Goose with env-based provider config |
 | `--best` | Show only top-tier models (A+, S, S+) |
 | `--fiable` | Analyze 10 seconds, output the most reliable model as `provider/model_id` |
+| `--json` | Output results as JSON (for scripting/automation, CI/CD, dashboards) |
 | `--tier S` | Show only S+ and S tier models |
 | `--tier A` | Show only A+, A, A- tier models |
 | `--tier B` | Show only B+, B tier models |

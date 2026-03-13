@@ -22,6 +22,7 @@ export function createOverlayRenderers(state, deps) {
     chalk,
     sources,
     PROVIDER_METADATA,
+    PROVIDER_COLOR,
     LOCAL_VERSION,
     getApiKey,
     getProxySettings,
@@ -202,7 +203,9 @@ export function createOverlayRenderers(state, deps) {
       const rateSummary = chalk.dim(meta.rateLimits || 'No limit info')
 
       const enabledBadge = enabled ? chalk.greenBright('✅') : chalk.redBright('❌')
-      const providerName = chalk.bold((meta.label || src.name || pk).slice(0, 22).padEnd(22))
+      // 📖 Color provider names the same way as in the main table
+      const providerRgb = PROVIDER_COLOR[pk] ?? [105, 190, 245]
+      const providerName = chalk.bold.rgb(...providerRgb)((meta.label || src.name || pk).slice(0, 22).padEnd(22))
       const bullet = isCursor ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
 
       const row = `${bullet}[ ${enabledBadge} ] ${providerName}  ${keyDisplay.padEnd(30)}  ${testBadge}  ${rateSummary}`
@@ -217,7 +220,10 @@ export function createOverlayRenderers(state, deps) {
     if (selectedSource && state.settingsCursor < providerKeys.length) {
       const selectedKey = getApiKey(state.config, selectedProviderKey)
       const setupStatus = selectedKey ? chalk.green('API key detected ✅') : chalk.yellow('API key missing ⚠')
-      lines.push(`  ${chalk.bold('Setup Instructions')} — ${selectedMeta.label || selectedSource.name || selectedProviderKey}`)
+      // 📖 Color the provider name in the setup instructions header
+      const selectedProviderRgb = PROVIDER_COLOR[selectedProviderKey] ?? [105, 190, 245]
+      const coloredProviderName = chalk.bold.rgb(...selectedProviderRgb)(selectedMeta.label || selectedSource.name || selectedProviderKey)
+      lines.push(`  ${chalk.bold('Setup Instructions')} — ${coloredProviderName}`)
       lines.push(chalk.dim(`  1) Create a ${selectedMeta.label || selectedSource.name} account: ${selectedMeta.signupUrl || 'signup link missing'}`))
       lines.push(chalk.dim(`  2) ${selectedMeta.signupHint || 'Generate an API key and paste it with Enter on this row'}`))
       lines.push(chalk.dim(`  3) Press ${chalk.yellow('T')} to test your key. Status: ${setupStatus}`))

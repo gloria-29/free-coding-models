@@ -77,6 +77,7 @@
  *   - --crush / --goose: launch the currently selected model in the supported external CLI
  *   - --best: Show only top-tier models (A+, S, S+)
  *   - --fiable: Analyze 10s and output the most reliable model
+ *   - --json: Output results as JSON (for scripting/automation)
  *   - --no-telemetry: Disable anonymous usage analytics for this run
  *   - --tier S/A/B/C: Filter models by tier letter (S=S+/S, A=A+/A/A-, B=B+/B, C=C)
  *
@@ -92,7 +93,7 @@ import { randomUUID } from 'crypto'
 import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { MODELS, sources } from '../sources.js'
-import { getAvg, getVerdict, getUptime, getP95, getJitter, getStabilityScore, sortResults, filterByTier, findBestModel, parseArgs, TIER_ORDER, VERDICT_ORDER, TIER_LETTER_MAP, scoreModelForTask, getTopRecommendations, TASK_TYPES, PRIORITY_TYPES, CONTEXT_BUDGETS, formatCtxWindow, labelFromId, getProxyStatusInfo } from '../src/utils.js'
+import { getAvg, getVerdict, getUptime, getP95, getJitter, getStabilityScore, sortResults, filterByTier, findBestModel, parseArgs, TIER_ORDER, VERDICT_ORDER, TIER_LETTER_MAP, scoreModelForTask, getTopRecommendations, TASK_TYPES, PRIORITY_TYPES, CONTEXT_BUDGETS, formatCtxWindow, labelFromId, getProxyStatusInfo, formatResultsAsJSON } from '../src/utils.js'
 import { loadConfig, saveConfig, getApiKey, getProxySettings, resolveApiKeys, addApiKey, removeApiKey, isProviderEnabled, saveAsProfile, loadProfile, listProfiles, deleteProfile, getActiveProfileName, setActiveProfile, _emptyProfileSettings } from '../src/config.js'
 import { buildMergedModels } from '../src/model-merger.js'
 import { ProxyServer } from '../src/proxy-server.js'
@@ -120,6 +121,8 @@ import { createKeyHandler } from '../src/key-handler.js'
 import { getToolModeOrder } from '../src/tool-metadata.js'
 import { startExternalTool } from '../src/tool-launchers.js'
 import { getConfiguredInstallableProviders, installProviderEndpoints, refreshInstalledEndpoints, getInstallTargetModes, getProviderCatalogModels } from '../src/endpoint-installer.js'
+import { loadCache, saveCache, clearCache, getCacheAge } from '../src/cache.js'
+import { checkConfigSecurity } from '../src/security.js'
 
 // 📖 mergedModels: cross-provider grouped model list (one entry per label, N providers each)
 // 📖 mergedModelByLabel: fast lookup map from display label → merged model entry
@@ -179,6 +182,12 @@ async function main() {
   const config = loadConfig()
   ensureTelemetryConfig(config)
   ensureFavoritesConfig(config)
+
+  // 📖 Check config file security — warn and offer auto-fix if permissions are too open
+  const securityCheck = checkConfigSecurity()
+  if (!securityCheck.wasSecure && !securityCheck.wasFixed) {
+    // 📖 User declined auto-fix or it failed — continue anyway, just warned
+  }
 
   if (cliArgs.cleanProxyMode) {
     const cleaned = cleanupOpenCodeProxyConfig()
@@ -533,11 +542,78 @@ async function main() {
     void autoStartProxyIfSynced(config, state)
   }
 
+  // 📖 Load cache if available (for faster startup with cached ping results)
+  const cached = loadCache()
+  if (cached && cached.models) {
+    // 📖 Apply cached values to results
+    for (const r of state.results) {
+      const cachedModel = cached.models[r.modelId]
+      if (cachedModel) {
+        r.avg = cachedModel.avg
+        r.p95 = cachedModel.p95
+        r.jitter = cachedModel.jitter
+        r.stability = cachedModel.stability
+        r.uptime = cachedModel.uptime
+        r.verdict = cachedModel.verdict
+        r.status = cachedModel.status
+        r.httpCode = cachedModel.httpCode
+        r.pings = cachedModel.pings || []
+      }
+    }
+  }
+
+  // 📖 JSON output mode: skip TUI, output results as JSON after initial pings
+  if (cliArgs.jsonMode) {
+    console.log(chalk.cyan('  ⚡ Pinging models for JSON output...'))
+    console.log()
+
+    // 📖 Run initial pings
+    const initialPing = Promise.all(state.results.map(r => pingModel(r)))
+    await initialPing
+
+    // 📖 Calculate final stats
+    state.results.forEach(r => {
+      r.avg = getAvg(r)
+      r.p95 = getP95(r)
+      r.jitter = getJitter(r)
+      r.stability = getStabilityScore(r)
+      r.uptime = getUptime(r)
+      r.verdict = getVerdict(r)
+    })
+
+    // 📖 Apply tier filter if specified
+    let outputResults = state.results
+    if (cliArgs.tierFilter) {
+      const filteredTier = TIER_LETTER_MAP[cliArgs.tierFilter]
+      if (filteredTier) {
+        outputResults = state.results.filter(r => filteredTier.includes(r.tier))
+      }
+    }
+
+    // 📖 Apply best mode filter if specified
+    if (cliArgs.bestMode) {
+      outputResults = outputResults.filter(r => ['S+', 'S', 'A+'].includes(r.tier))
+    }
+
+    // 📖 Sort by avg ping (ascending)
+    outputResults = sortResults(outputResults, 'avg', 'asc')
+
+    // 📖 Output JSON
+    console.log(formatResultsAsJSON(outputResults))
+
+    // 📖 Save cache before exiting
+    saveCache(state.results, state.pingMode)
+
+    process.exit(0)
+  }
+
   // 📖 Enter alternate screen — animation runs here, zero scrollback pollution
   process.stdout.write(ALT_ENTER)
 
   // 📖 Ensure we always leave alt screen cleanly (Ctrl+C, crash, normal exit)
   const exit = (code = 0) => {
+    // 📖 Save cache before exiting so next run starts faster
+    saveCache(state.results, state.pingMode)
     clearInterval(ticker)
     clearTimeout(state.pingIntervalObj)
     process.stdout.write(ALT_LEAVE)
@@ -590,6 +666,7 @@ async function main() {
     chalk,
     sources,
     PROVIDER_METADATA,
+    PROVIDER_COLOR,
     LOCAL_VERSION,
     getApiKey,
     getProxySettings,
@@ -848,6 +925,9 @@ async function main() {
   scheduleNextPing()
 
   await initialPing
+
+  // 📖 Save cache after initial pings complete for faster next startup
+  saveCache(state.results, state.pingMode)
 
   // 📖 Keep interface running forever - user can select anytime or Ctrl+C to exit
   // 📖 The pings continue running in background with dynamic interval

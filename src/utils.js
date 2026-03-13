@@ -389,13 +389,13 @@ export function findBestModel(results) {
 //   - API key: first positional arg that doesn't start with "--" (e.g., "nvapi-xxx")
 //   - Boolean flags: --best, --fiable, --opencode, --opencode-desktop, --openclaw,
 //     --aider, --crush, --goose, --claude-code, --codex, --gemini, --qwen,
-//     --openhands, --amp, --pi, --no-telemetry (case-insensitive)
+//     --openhands, --amp, --pi, --no-telemetry, --json (case-insensitive)
 //   - Value flag: --tier <letter> (the next non-flag arg is the tier value)
 //
 // 📖 Returns:
 //   { apiKey, bestMode, fiableMode, openCodeMode, openCodeDesktopMode, openClawMode,
 //     aiderMode, crushMode, gooseMode, claudeCodeMode, codexMode, geminiMode,
-//     qwenMode, openHandsMode, ampMode, piMode, noTelemetry, tierFilter }
+//     qwenMode, openHandsMode, ampMode, piMode, noTelemetry, jsonMode, tierFilter }
 //
 // 📖 Note: apiKey may be null here — the main CLI falls back to env vars and saved config.
 export function parseArgs(argv) {
@@ -446,6 +446,7 @@ export function parseArgs(argv) {
   const piMode = flags.includes('--pi')
   const noTelemetry = flags.includes('--no-telemetry')
   const cleanProxyMode = flags.includes('--clean-proxy') || flags.includes('--proxy-clean')
+  const jsonMode = flags.includes('--json')
 
   let tierFilter = tierValueIdx !== -1 ? args[tierValueIdx].toUpperCase() : null
 
@@ -473,6 +474,7 @@ export function parseArgs(argv) {
     piMode,
     noTelemetry,
     cleanProxyMode,
+    jsonMode,
     tierFilter,
     profileName,
     recommendMode
@@ -727,4 +729,67 @@ export function getVersionStatusInfo(updateState, latestVersion) {
     isOutdated: false,
     latestVersion: null,
   }
+}
+
+/**
+ * 📖 formatResultsAsJSON converts model results to clean JSON output for scripting/automation.
+ *
+ * 📖 This is used by the --json flag to output results in a machine-readable format.
+ * 📖 The output is designed to be:
+ *    - Easy to parse with jq, grep, awk, or any JSON library
+ *    - Human-readable for debugging
+ *    - Stable (field names won't change between versions)
+ *
+ * 📖 Output format:
+ *   [
+ *     {
+ *       "rank": 1,
+ *       "modelId": "nvidia/deepseek-ai/deepseek-v3.2",
+ *       "label": "DeepSeek V3.2",
+ *       "provider": "nvidia",
+ *       "tier": "S+",
+ *       "sweScore": "73.1%",
+ *       "context": "128k",
+ *       "latestPing": 245,
+ *       "avgPing": 260,
+ *       "p95": 312,
+ *       "jitter": 45,
+ *       "stability": 87,
+ *       "uptime": 95.5,
+ *       "verdict": "Perfect",
+ *       "status": "up"
+ *     },
+ *     ...
+ *   ]
+ *
+ * 📖 Note: NaN and Infinity values are converted to null for cleaner JSON.
+ *
+ * @param {Array} results — Model result objects from the TUI
+ * @param {string} sortBy — Current sort column (for rank calculation)
+ * @param {number} limit — Maximum number of results to return (0 = all)
+ * @returns {string} JSON string of formatted results
+ */
+export function formatResultsAsJSON(results, sortBy = 'avg', limit = 0) {
+  const formatted = results
+    .map((r, idx) => ({
+      rank: r.idx || idx + 1,
+      modelId: r.modelId || null,
+      label: r.label || null,
+      provider: r.providerKey || null,
+      tier: r.tier || null,
+      sweScore: r.sweScore || null,
+      context: r.ctx || null,
+      latestPing: (r.pings && r.pings.length > 0) ? r.pings[r.pings.length - 1].ms : null,
+      avgPing: (Number.isFinite(r.avg)) ? r.avg : null,
+      p95: (Number.isFinite(r.p95)) ? r.p95 : null,
+      jitter: (Number.isFinite(r.jitter)) ? r.jitter : null,
+      stability: (Number.isFinite(r.stability)) ? r.stability : null,
+      uptime: (Number.isFinite(r.uptime)) ? r.uptime : null,
+      verdict: r.verdict || null,
+      status: r.status || null,
+      httpCode: r.httpCode || null
+    }))
+    .slice(0, limit || undefined)
+
+  return JSON.stringify(formatted, null, 2)
 }
