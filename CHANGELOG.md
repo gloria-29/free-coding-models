@@ -2,15 +2,13 @@
 
 ---
 
-## 0.2.7
+## 0.2.8
 
 ### Updated
 
 - 📊 **Provider quota information refreshed** – Updated free‑tier request limits for NVIDIA NIM, Groq, Cerebras, Replicate, DeepInfra, and Fireworks AI in `src/provider-metadata.js` and the README.
 - 📖 **README requirements section** – Added the latest quota details for each provider (40 req/min for NVIDIA, 30‑50 RPM for Groq, generous dev tier for Cerebras, 6 req/min free Replicate, 200 concurrent DeepInfra, 10 req/min free Fireworks) and clarified payment‑method dependent limits.
 - 🛠️ **No functional code changes** – Metadata updates only; all tests continue to pass.
-
-## 0.2.6
 
 ### Added
 
@@ -47,7 +45,6 @@
 - 📝 **Updated documentation** - Added `--json` flag to CLI flags table in README.md with usage examples
 
 - 🔌 Added `terminalcp` MCP server configuration for Claude Code to spawn and interact with the TUI headlessly. Agents can now visually test the terminal interface by capturing output and sending keystrokes programmatically. See AGENTS.md → "Testing the TUI with terminalcp" for usage.
-
 - 🎨 **Added consistent branding header to all overlays** - Each overlay (Settings, Help, Log, Install Endpoints, Recommend, Feature Request, Bug Report) now displays:
   - Free-coding-models logo with rocket emoji (🚀)
   - Version number display
@@ -103,7 +100,7 @@
 - 🔒 **Fixed profile loading to preserve API keys** - Loading a profile now MERGES apiKeys instead of replacing them:
   - Keys in the profile override existing keys (allows profile-specific overrides)
   - Keys NOT in the profile are preserved (prevents key loss when switching profiles)
-  - Fixes bug where switching profiles would cause API keys to disappear
+  - Fixes bug where switching profiles would cause API keys disappear
   - Added test to verify merge behavior
 
 - 📝 **Updated OpenRouter rate limits information**:
