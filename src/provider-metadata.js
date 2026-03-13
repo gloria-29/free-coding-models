@@ -94,7 +94,7 @@ export const PROVIDER_METADATA = {
     color: chalk.rgb(179, 229, 252),
     signupUrl: 'https://cloud.cerebras.ai',
     signupHint: 'API Keys → Create',
-    rateLimits: 'PLACEHOLDER_GROQ_CEREBRAS',
+    rateLimits: 'Free tier: generous (developer tier 10× higher limits)',
   },
   sambanova: {
     label: 'SambaNova',
@@ -125,21 +125,21 @@ export const PROVIDER_METADATA = {
     color: chalk.rgb(187, 222, 251),
     signupUrl: 'https://replicate.com/account/api-tokens',
     signupHint: 'Account → API Tokens',
-    rateLimits: 'Developer free quota',
+    rateLimits: 'Free tier: 6 req/min (no payment) – up to 3,000 RPM (API) / 600 RPM (predictions) with payment',
   },
   deepinfra: {
     label: 'DeepInfra',
     color: chalk.rgb(178, 223, 219),
     signupUrl: 'https://deepinfra.com/login',
     signupHint: 'Login → API keys',
-    rateLimits: 'Free dev tier (low-latency quota)',
+    rateLimits: 'Free tier: 200 concurrent requests (default)',
   },
   fireworks: {
     label: 'Fireworks AI',
     color: chalk.rgb(255, 205, 210),
     signupUrl: 'https://fireworks.ai',
     signupHint: 'Create account → Generate API key',
-    rateLimits: '$1 free credits (new dev accounts)',
+    rateLimits: 'Free tier: $1 credits – 10 req/min without payment method (full limits with payment)',
   },
   codestral: {
     label: 'Mistral Codestral',

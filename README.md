@@ -103,7 +103,7 @@ Before using `free-coding-models`, make sure you have:
 
 1. **Node.js 18+** — Required for native `fetch` API
 2. **At least one free API key** — pick any or all of:
-   - **NVIDIA NIM** — [build.nvidia.com](https://build.nvidia.com) → Profile → API Keys → Generate
+   - **NVIDIA NIM** — [build.nvidia.com](https://build.nvidia.com) → Profile → API Keys → Generate – free tier: 40 req/min (no credit card)
    - **Groq** — [console.groq.com/keys](https://console.groq.com/keys) → Create API Key
    - **Cerebras** — [cloud.cerebras.ai](https://cloud.cerebras.ai) → API Keys → Create
    - **SambaNova** — [sambanova.ai/developers](https://sambanova.ai/developers) → Developers portal → API key (dev tier generous)
