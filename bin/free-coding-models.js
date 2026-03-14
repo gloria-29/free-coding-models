@@ -261,47 +261,26 @@ async function main() {
     ts: new Date().toISOString(),
   })
 
-  // 📖 Check for updates in the background
+  // 📖 Check for updates in the background (non-blocking, non-forced)
+  // 📖 The old auto-update on startup caused infinite loops, so we've moved to:
+  // 📖 1. Optional prompt when a new version is available (user chooses to update or not)
+  // 📖 2. Display "OUTDATED" in TUI footer if update check fails repeatedly
   let latestVersion = null
+  let isOutdated = false
   try {
     latestVersion = await checkForUpdate()
-  } catch {
-    // Silently fail - don't block the app if npm registry is unreachable
-  }
-
-  // 📖 Auto-update system: force updates and handle changelog automatically
-  // 📖 Skip when running from source (dev mode) — .git means we're in a repo checkout,
-  // 📖 not a global npm install. Auto-update would overwrite the global copy but restart
-  // 📖 the local one, causing an infinite update loop since LOCAL_VERSION never changes.
-  const isDevMode = existsSync(join(dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1')), '..', '.git'))
-  if (latestVersion && !isDevMode) {
-    console.log()
-    console.log(chalk.bold.red('  ⚠ AUTO-UPDATE AVAILABLE'))
-    console.log(chalk.red(`  Version ${latestVersion} will be installed automatically`))
-    console.log(chalk.dim('  Opening changelog in browser...'))
-    console.log()
-    
-    // 📖 Open changelog automatically
-    const { execSync } = require('child_process')
-    const changelogUrl = 'https://github.com/vava-nessa/free-coding-models/releases'
-    try {
-      if (isMac) {
-        execSync(`open "${changelogUrl}"`, { stdio: 'ignore' })
-      } else if (isWindows) {
-        execSync(`start "" "${changelogUrl}"`, { stdio: 'ignore' })
-      } else {
-        execSync(`xdg-open "${changelogUrl}"`, { stdio: 'ignore' })
-      }
-      console.log(chalk.green('  ✅ Changelog opened in browser'))
-    } catch {
-      console.log(chalk.yellow('  ⚠ Could not open browser automatically'))
-      console.log(chalk.dim(`  Visit manually: ${changelogUrl}`))
+    // 📖 Track update check failures - if it fails 3+ times, mark as outdated
+    if (!latestVersion && config.settings?.updateCheckFailures >= 3) {
+      isOutdated = true
     }
-    
-    // 📖 Force update immediately
-    console.log(chalk.cyan('  🚀 Starting auto-update...'))
-    runUpdate(latestVersion)
-    return // runUpdate will restart the process
+  } catch (err) {
+    // 📖 Silently fail - don't block the app if npm registry is unreachable
+    // 📖 But track the failure for outdated detection
+    const failures = (config.settings?.updateCheckFailures || 0) + 1
+    if (!config.settings) config.settings = {}
+    config.settings.updateCheckFailures = Math.min(failures, 3)
+    if (failures >= 3) isOutdated = true
+    saveConfig(config)
   }
 
   // 📖 Dynamic OpenRouter free model discovery — fetch live free models from API
@@ -392,6 +371,8 @@ async function main() {
     lastPingTime: now,            // 📖 Track when last ping cycle started
     lastUserActivityAt: now,      // 📖 Any keypress refreshes this timer; inactivity can force slow mode.
     resumeSpeedOnActivity: false, // 📖 Set after idle slowdown so the next activity restarts a 60s speed burst.
+    latestVersion,                // 📖 Latest npm version available (null if none or check failed)
+    isOutdated,                   // 📖 Set to true if update check failed 3+ times (show red "OUTDATED" footer)
     mode,                         // 📖 'opencode' or 'openclaw' — controls Enter action
     tierFilterMode: 0,            // 📖 Index into TIER_CYCLE (0=All, 1=S+, 2=S, ...)
     originFilterMode: 0,          // 📖 Index into ORIGIN_CYCLE (0=All, then providers)
@@ -813,7 +794,7 @@ async function main() {
                 ? overlays.renderHelp()
               : state.logVisible
                 ? overlays.renderLog()
-                : renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer, state.proxyStartupStatus, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.settingsUpdateState, state.settingsUpdateLatestVersion, getProxySettings(state.config).enabled === true)
+                : renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer, state.proxyStartupStatus, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.settingsUpdateState, state.settingsUpdateLatestVersion, getProxySettings(state.config).enabled === true, state.isOutdated, state.latestVersion)
     process.stdout.write(ALT_HOME + content)
   }, Math.round(1000 / FPS))
 
@@ -821,7 +802,7 @@ async function main() {
   const initialVisible = state.results.filter(r => !r.hidden)
   state.visibleSorted = sortResultsWithPinnedFavorites(initialVisible, state.sortColumn, state.sortDirection)
 
-  process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer, state.proxyStartupStatus, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.settingsUpdateState, state.settingsUpdateLatestVersion, getProxySettings(state.config).enabled === true))
+  process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer, state.proxyStartupStatus, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.settingsUpdateState, state.settingsUpdateLatestVersion, getProxySettings(state.config).enabled === true, state.isOutdated, state.latestVersion))
 
   // 📖 If --recommend was passed, auto-open the Smart Recommend overlay on start
   if (cliArgs.recommendMode) {

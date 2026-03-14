@@ -92,7 +92,7 @@ export function setActiveProxy(proxyInstance) {
 }
 
 // ─── renderTable: mode param controls footer hint text (opencode vs openclaw) ─────────
-export function renderTable(results, pendingPings, frame, cursor = null, sortColumn = 'avg', sortDirection = 'asc', pingInterval = PING_INTERVAL, lastPingTime = Date.now(), mode = 'opencode', tierFilterMode = 0, scrollOffset = 0, terminalRows = 0, terminalCols = 0, originFilterMode = 0, activeProfile = null, profileSaveMode = false, profileSaveBuffer = '', proxyStartupStatus = null, pingMode = 'normal', pingModeSource = 'auto', hideUnconfiguredModels = false, widthWarningStartedAt = null, widthWarningDismissed = false, settingsUpdateState = 'idle', settingsUpdateLatestVersion = null, proxyEnabled = false) {
+export function renderTable(results, pendingPings, frame, cursor = null, sortColumn = 'avg', sortDirection = 'asc', pingInterval = PING_INTERVAL, lastPingTime = Date.now(), mode = 'opencode', tierFilterMode = 0, scrollOffset = 0, terminalRows = 0, terminalCols = 0, originFilterMode = 0, activeProfile = null, profileSaveMode = false, profileSaveBuffer = '', proxyStartupStatus = null, pingMode = 'normal', pingModeSource = 'auto', hideUnconfiguredModels = false, widthWarningStartedAt = null, widthWarningDismissed = false, settingsUpdateState = 'idle', settingsUpdateLatestVersion = null, proxyEnabled = false, isOutdated = false, latestVersion = null) {
   // 📖 Filter out hidden models for display
   const visibleResults = results.filter(r => !r.hidden)
 
@@ -648,25 +648,33 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     const latestLabel = chalk.redBright(` local v${LOCAL_VERSION} · latest v${versionStatus.latestVersion}`)
     lines.push(`  ${outdatedBadge}${latestLabel}`)
   }
-  lines.push(
-    chalk.rgb(255, 150, 200)('  Made with 💖 & ☕ by \x1b]8;;https://github.com/vava-nessa\x1b\\vava-nessa\x1b]8;;\x1b\\') +
-    chalk.dim('  •  ') +
-    '⭐ ' +
-    chalk.yellow('\x1b]8;;https://github.com/vava-nessa/free-coding-models\x1b\\Star on GitHub\x1b]8;;\x1b\\') +
-    chalk.dim('  •  ') +
-    '🤝 ' +
-    chalk.rgb(255, 165, 0)('\x1b]8;;https://github.com/vava-nessa/free-coding-models/graphs/contributors\x1b\\Contributors\x1b]8;;\x1b\\') +
-    chalk.dim('  •  ') +
-    '☕ ' +
-    chalk.rgb(255, 200, 100)('\x1b]8;;https://buymeacoffee.com/vavanessadev\x1b\\Buy me a coffee\x1b]8;;\x1b\\') +
-    chalk.dim('  •  ') +
-    '💬 ' +
-    chalk.rgb(200, 150, 255)('\x1b]8;;https://discord.gg/ZTNFHvvCkU\x1b\\Discord\x1b]8;;\x1b\\') +
-    chalk.dim(' → ') +
-    chalk.rgb(200, 150, 255)('https://discord.gg/ZTNFHvvCkU') +
-    chalk.dim('  •  ') +
-    chalk.dim('Ctrl+C Exit')
-  )
+
+  // 📖 Build footer line, with OUTDATED warning if isOutdated is true
+  let footerLine = ''
+  if (isOutdated) {
+    // 📖 Show OUTDATED in red background, high contrast warning
+    footerLine = chalk.bgRed.bold.white('  ⚠ OUTDATED version, please update with "npm i -g free-coding-models@latest"  ')
+  } else {
+    footerLine =
+      chalk.rgb(255, 150, 200)('  Made with 💖 & ☕ by \x1b]8;;https://github.com/vava-nessa\x1b\\vava-nessa\x1b]8;;\x1b\\') +
+      chalk.dim('  •  ') +
+      '⭐ ' +
+      chalk.yellow('\x1b]8;;https://github.com/vava-nessa/free-coding-models\x1b\\Star on GitHub\x1b]8;;\x1b\\') +
+      chalk.dim('  •  ') +
+      '🤝 ' +
+      chalk.rgb(255, 165, 0)('\x1b]8;;https://github.com/vava-nessa/free-coding-models/graphs/contributors\x1b\\Contributors\x1b]8;;\x1b\\') +
+      chalk.dim('  •  ') +
+      '☕ ' +
+      chalk.rgb(255, 200, 100)('\x1b]8;;https://buymeacoffee.com/vavanessadev\x1b\\Buy me a coffee\x1b]8;;\x1b\\') +
+      chalk.dim('  •  ') +
+      '💬 ' +
+      chalk.rgb(200, 150, 255)('\x1b]8;;https://discord.gg/ZTNFHvvCkU\x1b\\Discord\x1b]8;;\x1b\\') +
+      chalk.dim(' → ') +
+      chalk.rgb(200, 150, 255)('https://discord.gg/ZTNFHvvCkU') +
+      chalk.dim('  •  ') +
+      chalk.dim('Ctrl+C Exit')
+  }
+  lines.push(footerLine)
 
   // 📖 Append \x1b[K (erase to EOL) to each line so leftover chars from previous
   // 📖 frames are cleared. Then pad with blank cleared lines to fill the terminal,
