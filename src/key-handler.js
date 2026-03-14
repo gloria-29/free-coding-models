@@ -25,6 +25,8 @@
  * @exports { buildProviderModelsUrl, parseProviderModelIds, listProviderTestModels, classifyProviderTestOutcome, buildProviderTestDetail, createKeyHandler }
  */
 
+import { loadChangelog } from './changelog-loader.js'
+
 // 📖 Some providers need an explicit probe model because the first catalog entry
 // 📖 is not guaranteed to be accepted by their chat endpoint.
 const PROVIDER_TEST_MODEL_OVERRIDES = {
@@ -766,19 +768,66 @@ export function createKeyHandler(ctx) {
       return
     }
 
-    // 📖 Changelog overlay: full keyboard navigation + key swallowing while overlay is open.
+    // 📖 Changelog overlay: two-phase (index + details) with keyboard navigation
     if (state.changelogOpen) {
       const pageStep = Math.max(1, (state.terminalRows || 1) - 2)
+      const changelogData = loadChangelog()
+      const { versions } = changelogData
+      const versionList = Object.keys(versions).sort((a, b) => {
+        const aParts = a.split('.').map(Number)
+        const bParts = b.split('.').map(Number)
+        for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+          const aVal = aParts[i] || 0
+          const bVal = bParts[i] || 0
+          if (bVal !== aVal) return bVal - aVal
+        }
+        return 0
+      })
+
+      // 📖 Close changelog overlay
       if (key.name === 'escape' || key.name === 'n') {
         state.changelogOpen = false
+        state.changelogPhase = 'index'
+        state.changelogCursor = 0
+        state.changelogSelectedVersion = null
         return
       }
-      if (key.name === 'up') { state.changelogScrollOffset = Math.max(0, state.changelogScrollOffset - 1); return }
-      if (key.name === 'down') { state.changelogScrollOffset += 1; return }
-      if (key.name === 'pageup') { state.changelogScrollOffset = Math.max(0, state.changelogScrollOffset - pageStep); return }
-      if (key.name === 'pagedown') { state.changelogScrollOffset += pageStep; return }
-      if (key.name === 'home') { state.changelogScrollOffset = 0; return }
-      if (key.name === 'end') { state.changelogScrollOffset = Number.MAX_SAFE_INTEGER; return }
+
+      if (state.changelogPhase === 'index') {
+        // 📖 INDEX PHASE: Navigate through versions
+        if (key.name === 'up') {
+          state.changelogCursor = Math.max(0, state.changelogCursor - 1)
+          return
+        }
+        if (key.name === 'down') {
+          state.changelogCursor = Math.min(versionList.length - 1, state.changelogCursor + 1)
+          return
+        }
+        if (key.name === 'home') { state.changelogCursor = 0; return }
+        if (key.name === 'end') { state.changelogCursor = versionList.length - 1; return }
+        if (key.name === 'return') {
+          // 📖 Enter details phase for selected version
+          state.changelogPhase = 'details'
+          state.changelogSelectedVersion = versionList[state.changelogCursor]
+          state.changelogScrollOffset = 0
+          return
+        }
+      } else if (state.changelogPhase === 'details') {
+        // 📖 DETAILS PHASE: Scroll through selected version details
+        if (key.name === 'b') {
+          // 📖 B = back to index
+          state.changelogPhase = 'index'
+          state.changelogScrollOffset = 0
+          return
+        }
+        if (key.name === 'up') { state.changelogScrollOffset = Math.max(0, state.changelogScrollOffset - 1); return }
+        if (key.name === 'down') { state.changelogScrollOffset += 1; return }
+        if (key.name === 'pageup') { state.changelogScrollOffset = Math.max(0, state.changelogScrollOffset - pageStep); return }
+        if (key.name === 'pagedown') { state.changelogScrollOffset += pageStep; return }
+        if (key.name === 'home') { state.changelogScrollOffset = 0; return }
+        if (key.name === 'end') { state.changelogScrollOffset = Number.MAX_SAFE_INTEGER; return }
+      }
+
       if (key.ctrl && key.name === 'c') { exit(0); return }
       return
     }
@@ -1482,7 +1531,12 @@ export function createKeyHandler(ctx) {
     // 📖 Changelog overlay key: N = toggle changelog overlay
     if (key.name === 'n') {
       state.changelogOpen = !state.changelogOpen
-      if (state.changelogOpen) state.changelogScrollOffset = 0
+      if (state.changelogOpen) {
+        state.changelogScrollOffset = 0
+        state.changelogPhase = 'index'
+        state.changelogCursor = 0
+        state.changelogSelectedVersion = null
+      }
       return
     }
 

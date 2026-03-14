@@ -612,7 +612,7 @@ export function createOverlayRenderers(state, deps) {
     lines.push(`  ${chalk.yellow('Shift+S')}  Save current config as a named profile  ${chalk.dim('(inline prompt — type name + Enter)')}`)
     lines.push(`             ${chalk.dim('Profiles store: favorites, sort, tier filter, ping interval, configured-only filter, API keys.')}`)
     lines.push(`             ${chalk.dim('Use --profile <name> to load a profile on startup.')}`)
-    lines.push(`  ${chalk.yellow('N')}  Changelog  ${chalk.dim('(📋 what changed in this version)')}`)
+    lines.push(`  ${chalk.yellow('N')}  Changelog  ${chalk.dim('(📋 browse all versions, Enter to view details)')}`)
     lines.push(`  ${chalk.yellow('K')} / ${chalk.yellow('Esc')}  Show/hide this help`)
     lines.push(`  ${chalk.yellow('Ctrl+C')}  Exit`)
     lines.push('')
@@ -1243,18 +1243,10 @@ export function createOverlayRenderers(state, deps) {
   }
 
   // ─── Changelog overlay renderer ───────────────────────────────────────────
-  // 📖 renderChangelog: Show CHANGELOG.md in a scrollable overlay
+  // 📖 renderChangelog: Two-phase overlay — index of all versions or details of one version
   function renderChangelog() {
     const EL = '\x1b[K'
     const lines = []
-
-    // 📖 Branding header
-    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
-    lines.push(`  ${chalk.bold('📋 Changelog')}`)
-    lines.push(`  ${chalk.dim('— ↑↓ / PgUp / PgDn / Home / End scroll • C or Esc close')}`)
-    lines.push('')
-
-    // 📖 Load and format changelog
     const changelogData = loadChangelog()
     const { versions } = changelogData
     const versionList = Object.keys(versions).sort((a, b) => {
@@ -1268,30 +1260,68 @@ export function createOverlayRenderers(state, deps) {
       return 0
     })
 
-    // 📖 Render each version
-    for (const version of versionList) {
-      const changes = versions[version]
-      lines.push(`  ${chalk.bold.cyanBright(`v${version}`)}`)
+    // 📖 Branding header
+    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
+
+    if (state.changelogPhase === 'index') {
+      // ═══════════════════════════════════════════════════════════════════════
+      // 📖 INDEX PHASE: Show all versions with selection
+      // ═══════════════════════════════════════════════════════════════════════
+      lines.push(`  ${chalk.bold('📋 Changelog - All Versions')}`)
+      lines.push(`  ${chalk.dim('— ↑↓ navigate • Enter select • Esc close')}`)
       lines.push('')
 
-      const sections = { added: '✨ Added', fixed: '🐛 Fixed', changed: '🔄 Changed', updated: '📝 Updated' }
-      for (const [key, label] of Object.entries(sections)) {
-        if (changes[key] && changes[key].length > 0) {
-          lines.push(`    ${chalk.yellow(label)}`)
-          for (const item of changes[key]) {
-            // 📖 Unwrap markdown bold/code markers for display
-            let displayText = item.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1')
-            // 📖 Wrap long lines
-            const maxWidth = state.terminalCols - 20
-            if (displayText.length > maxWidth) {
-              displayText = displayText.substring(0, maxWidth - 3) + '…'
-            }
-            lines.push(`      • ${displayText}`)
-          }
-          lines.push('')
+      for (let i = 0; i < versionList.length; i++) {
+        const version = versionList[i]
+        const changes = versions[version]
+        const isSelected = i === state.changelogCursor
+
+        // 📖 Count items in this version
+        let itemCount = 0
+        for (const key of ['added', 'fixed', 'changed', 'updated']) {
+          if (changes[key]) itemCount += changes[key].length
+        }
+
+        // 📖 Format version line with selection highlight
+        const versionStr = `  v${version.padEnd(8)} — ${itemCount} ${itemCount === 1 ? 'change' : 'changes'}`
+        if (isSelected) {
+          lines.push(chalk.inverse(versionStr))
+        } else {
+          lines.push(versionStr)
         }
       }
+
       lines.push('')
+      lines.push(`  ${chalk.dim(`Total: ${versionList.length} versions`)}`)
+
+    } else if (state.changelogPhase === 'details') {
+      // ═══════════════════════════════════════════════════════════════════════
+      // 📖 DETAILS PHASE: Show detailed changes for selected version
+      // ═══════════════════════════════════════════════════════════════════════
+      lines.push(`  ${chalk.bold(`📋 v${state.changelogSelectedVersion}`)}`)
+      lines.push(`  ${chalk.dim('— ↑↓ / PgUp / PgDn scroll • B back • Esc close')}`)
+      lines.push('')
+
+      const changes = versions[state.changelogSelectedVersion]
+      if (changes) {
+        const sections = { added: '✨ Added', fixed: '🐛 Fixed', changed: '🔄 Changed', updated: '📝 Updated' }
+        for (const [key, label] of Object.entries(sections)) {
+          if (changes[key] && changes[key].length > 0) {
+            lines.push(`  ${chalk.yellow(label)}`)
+            for (const item of changes[key]) {
+              // 📖 Unwrap markdown bold/code markers for display
+              let displayText = item.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1')
+              // 📖 Wrap long lines
+              const maxWidth = state.terminalCols - 16
+              if (displayText.length > maxWidth) {
+                displayText = displayText.substring(0, maxWidth - 3) + '…'
+              }
+              lines.push(`    • ${displayText}`)
+            }
+            lines.push('')
+          }
+        }
+      }
     }
 
     // 📖 Use scrolling with overlay handler

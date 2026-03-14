@@ -444,9 +444,12 @@ async function main() {
     logVisible: false,            // 📖 Whether the log page overlay is active
     logScrollOffset: 0,           // 📖 Vertical scroll offset for log overlay viewport
     logShowAll: false,             // 📖 Show all logs (true) or limited to 500 (false)
-    // 📖 Changelog overlay state (C key opens it)
+    // 📖 Changelog overlay state (N key opens it)
     changelogOpen: false,         // 📖 Whether the changelog overlay is active
     changelogScrollOffset: 0,     // 📖 Vertical scroll offset for changelog overlay viewport
+    changelogPhase: 'index',      // 📖 'index' (all versions) | 'details' (specific version)
+    changelogCursor: 0,           // 📖 Selected row in index phase
+    changelogSelectedVersion: null, // 📖 Which version to show details for
     // 📖 Proxy startup status — set by autoStartProxyIfSynced, consumed by Task 3 indicator
     // 📖 null = not configured/not attempted
     // 📖 { phase: 'starting' } — proxy start in progress
