@@ -5,8 +5,13 @@
  * @details
  *   This module encapsulates the full onKeyPress switch used by the TUI,
  *   including settings navigation, install-endpoint flow, overlays, profile management, and
- *   OpenCode/OpenClaw launch actions. It also keeps the live key bindings
- *   aligned with the highlighted letters shown in the table headers.
+ *   tool launch actions. It also keeps the live key bindings aligned with the
+ *   highlighted letters shown in the table headers.
+ *
+ *   📖 Key J opens the FCM Proxy V2 overlay directly (with daemon status refresh).
+ *   📖 Key I opens the unified "Feedback, bugs & requests" overlay.
+ *   📖 The proxy overlay handles tool cycling (ROW_PROXY_TOOL), sync toggle, cleanup
+ *       for any syncable tool via cleanupToolConfig(), and all daemon management actions.
  *
  *   It also owns the "test key" model selection used by the Settings overlay.
  *   Some providers expose models in `/v1/models` that are not actually callable
@@ -181,7 +186,7 @@ export function createKeyHandler(ctx) {
     ENV_VAR_NAMES,
     ensureProxyRunning,
     syncToOpenCode,
-    cleanupOpenCodeProxyConfig,
+    cleanupToolConfig,
     restoreOpenCodeBackup,
     checkForUpdateDetailed,
     runUpdate,
@@ -195,7 +200,6 @@ export function createKeyHandler(ctx) {
     getToolModeOrder,
     startRecommendAnalysis,
     stopRecommendAnalysis,
-    sendFeatureRequest,
     sendBugReport,
     stopUi,
     ping,
@@ -619,81 +623,14 @@ export function createKeyHandler(ctx) {
       return
     }
 
-    // 📖 Feature Request overlay: intercept ALL keys while overlay is active.
+    // 📖 Feedback overlay: intercept ALL keys while overlay is active.
     // 📖 Enter → send to Discord, Esc → cancel, Backspace → delete char, printable → append to buffer.
-    if (state.featureRequestOpen) {
+    if (state.feedbackOpen) {
       if (key.ctrl && key.name === 'c') { exit(0); return }
 
       if (key.name === 'escape') {
-        // 📖 Cancel feature request — close overlay
-        state.featureRequestOpen = false
-        state.featureRequestBuffer = ''
-        state.featureRequestStatus = 'idle'
-        state.featureRequestError = null
-        return
-      }
-
-      if (key.name === 'return') {
-        // 📖 Send feature request to Discord webhook
-        const message = state.featureRequestBuffer.trim()
-        if (message.length > 0 && state.featureRequestStatus !== 'sending') {
-          state.featureRequestStatus = 'sending'
-          const result = await sendFeatureRequest(message)
-          if (result.success) {
-            // 📖 Success — show confirmation briefly, then close overlay after 3 seconds
-            state.featureRequestStatus = 'success'
-            setTimeout(() => {
-              state.featureRequestOpen = false
-              state.featureRequestBuffer = ''
-              state.featureRequestStatus = 'idle'
-              state.featureRequestError = null
-            }, 3000)
-          } else {
-            // 📖 Error — show error message, keep overlay open
-            state.featureRequestStatus = 'error'
-            state.featureRequestError = result.error || 'Unknown error'
-          }
-        }
-        return
-      }
-
-      if (key.name === 'backspace') {
-        // 📖 Don't allow editing while sending or after success
-        if (state.featureRequestStatus === 'sending' || state.featureRequestStatus === 'success') return
-        state.featureRequestBuffer = state.featureRequestBuffer.slice(0, -1)
-        // 📖 Clear error status when user starts editing again
-        if (state.featureRequestStatus === 'error') {
-          state.featureRequestStatus = 'idle'
-          state.featureRequestError = null
-        }
-        return
-      }
-
-      // 📖 Append printable characters (str is the raw character typed)
-      // 📖 Limit to 500 characters (Discord embed description limit)
-      if (str && str.length === 1 && !key.ctrl && !key.meta) {
-        // 📖 Don't allow editing while sending or after success
-        if (state.featureRequestStatus === 'sending' || state.featureRequestStatus === 'success') return
-        if (state.featureRequestBuffer.length < 500) {
-          state.featureRequestBuffer += str
-          // 📖 Clear error status when user starts editing again
-          if (state.featureRequestStatus === 'error') {
-            state.featureRequestStatus = 'idle'
-            state.featureRequestError = null
-          }
-        }
-      }
-      return
-    }
-
-    // 📖 Bug Report overlay: intercept ALL keys while overlay is active.
-    // 📖 Enter → send to Discord, Esc → cancel, Backspace → delete char, printable → append to buffer.
-    if (state.bugReportOpen) {
-      if (key.ctrl && key.name === 'c') { exit(0); return }
-
-      if (key.name === 'escape') {
-        // 📖 Cancel bug report — close overlay
-        state.bugReportOpen = false
+        // 📖 Cancel feedback — close overlay
+        state.feedbackOpen = false
         state.bugReportBuffer = ''
         state.bugReportStatus = 'idle'
         state.bugReportError = null
@@ -701,7 +638,7 @@ export function createKeyHandler(ctx) {
       }
 
       if (key.name === 'return') {
-        // 📖 Send bug report to Discord webhook
+        // 📖 Send feedback to Discord webhook
         const message = state.bugReportBuffer.trim()
         if (message.length > 0 && state.bugReportStatus !== 'sending') {
           state.bugReportStatus = 'sending'
@@ -710,7 +647,7 @@ export function createKeyHandler(ctx) {
             // 📖 Success — show confirmation briefly, then close overlay after 3 seconds
             state.bugReportStatus = 'success'
             setTimeout(() => {
-              state.bugReportOpen = false
+              state.feedbackOpen = false
               state.bugReportBuffer = ''
               state.bugReportStatus = 'idle'
               state.bugReportError = null
@@ -1347,14 +1284,15 @@ export function createKeyHandler(ctx) {
     if (state.proxyDaemonOpen) {
       const proxySettings = getProxySettings(state.config)
       const ROW_PROXY_ENABLED = 0
-      const ROW_PROXY_SYNC = 1
-      const ROW_PROXY_PORT = 2
-      const ROW_PROXY_CLEANUP = 3
-      const ROW_DAEMON_INSTALL = 4
-      const ROW_DAEMON_RESTART = 5
-      const ROW_DAEMON_STOP = 6
-      const ROW_DAEMON_KILL = 7
-      const ROW_DAEMON_LOGS = 8
+      const ROW_PROXY_TOOL = 1
+      const ROW_PROXY_SYNC = 2
+      const ROW_PROXY_PORT = 3
+      const ROW_PROXY_CLEANUP = 4
+      const ROW_DAEMON_INSTALL = 5
+      const ROW_DAEMON_RESTART = 6
+      const ROW_DAEMON_STOP = 7
+      const ROW_DAEMON_KILL = 8
+      const ROW_DAEMON_LOGS = 9
 
       const daemonStatus = state.daemonStatus || 'not-installed'
       const daemonIsInstalled = daemonStatus === 'running' || daemonStatus === 'stopped' || daemonStatus === 'unhealthy' || daemonStatus === 'stale'
@@ -1402,6 +1340,9 @@ export function createKeyHandler(ctx) {
       if (key.name === 'pageup') { state.proxyDaemonCursor = Math.max(0, state.proxyDaemonCursor - 5); return }
       if (key.name === 'pagedown') { state.proxyDaemonCursor = Math.min(maxRow, state.proxyDaemonCursor + 5); return }
 
+      // 📖 Resolve active proxy tool (persisted or fallback to Z-mode)
+      const activeProxyTool = proxySettings.activeTool || state.mode || 'opencode'
+
       // 📖 Space toggles on proxy rows
       if (key.name === 'space') {
         if (state.proxyDaemonCursor === ROW_PROXY_ENABLED) {
@@ -1411,19 +1352,38 @@ export function createKeyHandler(ctx) {
           state.proxyDaemonMessage = { type: 'success', msg: `✅ Proxy mode ${state.config.settings.proxy.enabled ? 'enabled' : 'disabled'}`, ts: Date.now() }
           return
         }
-        if (state.proxyDaemonCursor === ROW_PROXY_SYNC) {
+        if (state.proxyDaemonCursor === ROW_PROXY_TOOL) {
+          // 📖 Space also cycles tool (same as Enter on this row)
+        } else if (state.proxyDaemonCursor === ROW_PROXY_SYNC) {
           if (!state.config.settings) state.config.settings = {}
           state.config.settings.proxy = { ...proxySettings, syncToOpenCode: !proxySettings.syncToOpenCode }
           saveConfig(state.config)
-          state.proxyDaemonMessage = { type: 'success', msg: `✅ OpenCode proxy sync ${state.config.settings.proxy.syncToOpenCode ? 'enabled' : 'disabled'}`, ts: Date.now() }
+          const { getToolMeta } = await import('./tool-metadata.js')
+          const toolLabel = getToolMeta(activeProxyTool).label
+          state.proxyDaemonMessage = { type: 'success', msg: `✅ Auto-sync to ${toolLabel} ${state.config.settings.proxy.syncToOpenCode ? 'enabled' : 'disabled'}`, ts: Date.now() }
+          return
+        } else {
           return
         }
+      }
+
+      // 📖 Enter or Space on ROW_PROXY_TOOL → cycle active tool
+      if ((key.name === 'return' || key.name === 'space') && state.proxyDaemonCursor === ROW_PROXY_TOOL) {
+        const { PROXY_SYNCABLE_TOOLS } = await import('./proxy-sync.js')
+        const currentIdx = PROXY_SYNCABLE_TOOLS.indexOf(activeProxyTool)
+        const nextIdx = (currentIdx + 1) % PROXY_SYNCABLE_TOOLS.length
+        const nextTool = PROXY_SYNCABLE_TOOLS[nextIdx]
+        if (!state.config.settings) state.config.settings = {}
+        state.config.settings.proxy = { ...proxySettings, activeTool: nextTool }
+        saveConfig(state.config)
+        const { getToolMeta } = await import('./tool-metadata.js')
+        state.proxyDaemonMessage = { type: 'success', msg: `✅ Active tool: ${getToolMeta(nextTool).emoji} ${getToolMeta(nextTool).label}`, ts: Date.now() }
         return
       }
 
       // 📖 Enter on proxy rows
       if (key.name === 'return') {
-        // 📖 Proxy enabled / sync — toggle (same as space)
+        // 📖 Proxy enabled — toggle
         if (state.proxyDaemonCursor === ROW_PROXY_ENABLED) {
           if (!state.config.settings) state.config.settings = {}
           state.config.settings.proxy = { ...proxySettings, enabled: !proxySettings.enabled }
@@ -1431,11 +1391,15 @@ export function createKeyHandler(ctx) {
           state.proxyDaemonMessage = { type: 'success', msg: `✅ Proxy mode ${state.config.settings.proxy.enabled ? 'enabled' : 'disabled'}`, ts: Date.now() }
           return
         }
+
+        // 📖 Auto-sync toggle
         if (state.proxyDaemonCursor === ROW_PROXY_SYNC) {
           if (!state.config.settings) state.config.settings = {}
           state.config.settings.proxy = { ...proxySettings, syncToOpenCode: !proxySettings.syncToOpenCode }
           saveConfig(state.config)
-          state.proxyDaemonMessage = { type: 'success', msg: `✅ OpenCode proxy sync ${state.config.settings.proxy.syncToOpenCode ? 'enabled' : 'disabled'}`, ts: Date.now() }
+          const { getToolMeta } = await import('./tool-metadata.js')
+          const toolLabel = getToolMeta(activeProxyTool).label
+          state.proxyDaemonMessage = { type: 'success', msg: `✅ Auto-sync to ${toolLabel} ${state.config.settings.proxy.syncToOpenCode ? 'enabled' : 'disabled'}`, ts: Date.now() }
           return
         }
 
@@ -1446,13 +1410,15 @@ export function createKeyHandler(ctx) {
           return
         }
 
-        // 📖 Clean proxy config
+        // 📖 Clean proxy config — generalized for active tool
         if (state.proxyDaemonCursor === ROW_PROXY_CLEANUP) {
-          const cleaned = cleanupOpenCodeProxyConfig()
-          state.proxyDaemonMessage = {
-            type: 'success',
-            msg: `✅ Proxy cleanup done (${cleaned.removedProvider ? 'provider removed' : 'no provider found'}, ${cleaned.removedModel ? 'default model cleared' : 'default model unchanged'})`,
-            ts: Date.now(),
+          const result = cleanupToolConfig(activeProxyTool)
+          const { getToolMeta } = await import('./tool-metadata.js')
+          const toolLabel = getToolMeta(activeProxyTool).label
+          if (result.success) {
+            state.proxyDaemonMessage = { type: 'success', msg: `✅ ${toolLabel} proxy config cleaned — all fcm-* entries removed`, ts: Date.now() }
+          } else {
+            state.proxyDaemonMessage = { type: 'error', msg: `❌ Cleanup failed: ${result.error}`, ts: Date.now() }
           }
           return
         }
@@ -1479,7 +1445,7 @@ export function createKeyHandler(ctx) {
             saveConfig(state.config)
             const result = installDaemon()
             if (result.success) {
-              state.proxyDaemonMessage = { type: 'success', msg: '✅ Background daemon installed and started!', ts: Date.now() }
+              state.proxyDaemonMessage = { type: 'success', msg: '✅ FCM Proxy V2 background service installed and started!', ts: Date.now() }
               const ns = await _gds()
               state.daemonStatus = ns.status
               state.daemonInfo = ns.info || null
@@ -1492,7 +1458,7 @@ export function createKeyHandler(ctx) {
             state.config.settings.proxy.daemonEnabled = false
             saveConfig(state.config)
             if (result.success) {
-              state.proxyDaemonMessage = { type: 'success', msg: '✅ Background daemon uninstalled.', ts: Date.now() }
+              state.proxyDaemonMessage = { type: 'success', msg: '✅ FCM Proxy V2 background service uninstalled.', ts: Date.now() }
               state.daemonStatus = 'not-installed'
               state.daemonInfo = null
             } else {
@@ -1507,7 +1473,7 @@ export function createKeyHandler(ctx) {
           const { restartDaemon, getDaemonStatus: _gds } = await import('./daemon-manager.js')
           const result = restartDaemon()
           if (result.success) {
-            state.proxyDaemonMessage = { type: 'success', msg: '✅ Daemon restarted.', ts: Date.now() }
+            state.proxyDaemonMessage = { type: 'success', msg: '✅ FCM Proxy V2 service restarted.', ts: Date.now() }
             // 📖 Wait a bit for the daemon to start up
             setTimeout(async () => {
               try {
@@ -1528,7 +1494,7 @@ export function createKeyHandler(ctx) {
           const result = stopDaemon()
           if (result.success) {
             const warning = result.willRestart ? ' (service may auto-restart it)' : ''
-            state.proxyDaemonMessage = { type: 'success', msg: `✅ Daemon stopped.${warning}`, ts: Date.now() }
+            state.proxyDaemonMessage = { type: 'success', msg: `✅ FCM Proxy V2 service stopped.${warning}`, ts: Date.now() }
             setTimeout(async () => {
               try {
                 const ns = await _gds()
@@ -1547,7 +1513,7 @@ export function createKeyHandler(ctx) {
           const { killDaemonProcess, getDaemonStatus: _gds } = await import('./daemon-manager.js')
           const result = killDaemonProcess()
           if (result.success) {
-            state.proxyDaemonMessage = { type: 'success', msg: '✅ Daemon force-killed (SIGKILL).', ts: Date.now() }
+            state.proxyDaemonMessage = { type: 'success', msg: '✅ FCM Proxy V2 service force-killed (SIGKILL).', ts: Date.now() }
             const ns = await _gds()
             state.daemonStatus = ns.status
             state.daemonInfo = ns.info || null
@@ -1799,18 +1765,25 @@ export function createKeyHandler(ctx) {
       return
     }
 
-    // 📖 J key: open Feature Request overlay (anonymous Discord feedback)
+    // 📖 J key: open FCM Proxy V2 settings overlay directly (bypasses Settings screen)
     if (key.name === 'j') {
-      state.featureRequestOpen = true
-      state.featureRequestBuffer = ''
-      state.featureRequestStatus = 'idle'
-      state.featureRequestError = null
+      state.proxyDaemonOpen = true
+      state.proxyDaemonCursor = 0
+      state.proxyDaemonScrollOffset = 0
+      state.proxyDaemonMessage = null
+      // 📖 Refresh daemon status when entering
+      try {
+        const { getDaemonStatus: _gds } = await import('./daemon-manager.js')
+        const st = await _gds()
+        state.daemonStatus = st.status
+        state.daemonInfo = st.info || null
+      } catch { /* ignore */ }
       return
     }
 
-    // 📖 I key: open Bug Report overlay (anonymous Discord bug reports)
+    // 📖 I key: open Feedback overlay (anonymous Discord feedback)
     if (key.name === 'i') {
-      state.bugReportOpen = true
+      state.feedbackOpen = true
       state.bugReportBuffer = ''
       state.bugReportStatus = 'idle'
       state.bugReportError = null

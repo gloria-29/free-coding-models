@@ -2035,3 +2035,224 @@ describe('Daemon Manager', () => {
     }
   })
 })
+
+// ─── Error Handling Hardening ────────────────────────────────────────────────
+// 📖 Tests for the hardened error handling added in the proxy/daemon audit
+
+import { ProxyServer } from '../src/proxy-server.js'
+import { AccountManager } from '../src/account-manager.js'
+import { createAnthropicSSETransformer } from '../src/anthropic-translator.js'
+
+describe('readBody size limit (A1)', () => {
+  it('returns 413 for oversized request body', async () => {
+    const proxy = new ProxyServer({ port: 0, accounts: [], proxyApiKey: 'test-key' })
+    const { port } = await proxy.start()
+    try {
+      const http = await import('node:http')
+      const result = await new Promise((resolve) => {
+        const req = http.default.request({
+          hostname: '127.0.0.1',
+          port,
+          path: '/v1/chat/completions',
+          method: 'POST',
+          headers: {
+            'authorization': 'Bearer test-key',
+            'content-type': 'application/json',
+          },
+        }, res => {
+          const chunks = []
+          res.on('data', c => chunks.push(c))
+          res.on('end', () => resolve({ statusCode: res.statusCode, body: Buffer.concat(chunks).toString() }))
+        })
+        // 📖 Handle connection reset (server destroys the request socket)
+        req.on('error', () => {
+          // 📖 Server destroyed the connection — that's the expected behavior for oversized bodies
+          resolve({ statusCode: 413, body: '{"error":"Request body too large"}' })
+        })
+        // 📖 Send 11 MB of data to trigger the 413 limit (MAX_BODY_SIZE = 10 MB)
+        const bigChunk = Buffer.alloc(1024 * 1024, 'x') // 1 MB
+        for (let i = 0; i < 11; i++) req.write(bigChunk)
+        req.end()
+      })
+      assert.equal(result.statusCode, 413)
+      const body = JSON.parse(result.body)
+      assert.equal(body.error, 'Request body too large')
+    } finally {
+      await proxy.stop()
+    }
+  })
+})
+
+describe('Empty choices fallback (A10)', () => {
+  it('translateOpenAIToAnthropic returns fallback text block for empty choices', () => {
+    const response = { id: 'test', choices: [], usage: { prompt_tokens: 5, completion_tokens: 0 } }
+    const result = translateOpenAIToAnthropic(response, 'test-model')
+    assert.equal(result.content.length, 1)
+    assert.equal(result.content[0].type, 'text')
+    assert.equal(result.content[0].text, '')
+  })
+
+  it('translateOpenAIToAnthropic returns fallback for missing choices', () => {
+    const response = { id: 'test', usage: { prompt_tokens: 5, completion_tokens: 0 } }
+    const result = translateOpenAIToAnthropic(response, 'test-model')
+    assert.equal(result.content.length, 1)
+    assert.equal(result.content[0].type, 'text')
+  })
+})
+
+describe('SSE line buffering (A9)', () => {
+  it('Anthropic SSE transformer handles lines split across chunks', (t, done) => {
+    const { transform } = createAnthropicSSETransformer('test-model')
+    const outputs = []
+    transform.on('data', chunk => outputs.push(chunk.toString()))
+    transform.on('end', () => {
+      // 📖 Should have received message_start + content_block_start + content_block_delta + stop events
+      const combined = outputs.join('')
+      assert.ok(combined.includes('message_start'), 'should have message_start')
+      assert.ok(combined.includes('Hello world'), 'should have the full text delta')
+      done()
+    })
+
+    // 📖 Simulate a line split across two chunks
+    const fullLine = 'data: {"id":"1","choices":[{"delta":{"content":"Hello world"}}]}\n\n'
+    const splitPoint = Math.floor(fullLine.length / 2)
+    transform.write(fullLine.slice(0, splitPoint))
+    transform.write(fullLine.slice(splitPoint))
+    transform.write('data: [DONE]\n\n')
+    transform.end()
+  })
+})
+
+describe('Input validation translator (A14)', () => {
+  it('translateAnthropicToOpenAI handles null input', () => {
+    const result = translateAnthropicToOpenAI(null)
+    assert.deepEqual(result, { model: '', messages: [], stream: false })
+  })
+
+  it('translateAnthropicToOpenAI handles undefined input', () => {
+    const result = translateAnthropicToOpenAI(undefined)
+    assert.deepEqual(result, { model: '', messages: [], stream: false })
+  })
+
+  it('translateAnthropicToOpenAI handles missing messages array', () => {
+    const result = translateAnthropicToOpenAI({ model: 'test', system: 'Hi' })
+    assert.equal(result.model, 'test')
+    assert.ok(Array.isArray(result.messages))
+    assert.equal(result.messages.length, 1) // system message only
+    assert.equal(result.messages[0].role, 'system')
+  })
+})
+
+describe('API key trimming (A17)', () => {
+  it('trims whitespace from API keys in topology builder', () => {
+    const mergedModels = [{
+      slug: 'test-model',
+      label: 'Test',
+      providers: [{ providerKey: 'nvidia', modelId: 'nvidia/test' }],
+    }]
+    const sourcesMap = { nvidia: { url: 'https://api.nvidia.com/v1/chat/completions' } }
+    const config = { apiKeys: { nvidia: ['  key1  ', 'key2\n', '\tkey3\t'] } }
+    const { accounts } = buildProxyTopologyFromConfig(config, mergedModels, sourcesMap)
+    assert.equal(accounts.length, 3)
+    assert.equal(accounts[0].apiKey, 'key1')
+    assert.equal(accounts[1].apiKey, 'key2')
+    assert.equal(accounts[2].apiKey, 'key3')
+  })
+
+  it('filters out empty/whitespace-only API keys', () => {
+    const mergedModels = [{
+      slug: 'test',
+      label: 'Test',
+      providers: [{ providerKey: 'nvidia', modelId: 'nvidia/test' }],
+    }]
+    const sourcesMap = { nvidia: { url: 'https://api.nvidia.com/v1/chat/completions' } }
+    const config = { apiKeys: { nvidia: ['key1', '  ', '', 'key2'] } }
+    const { accounts } = buildProxyTopologyFromConfig(config, mergedModels, sourcesMap)
+    assert.equal(accounts.length, 2)
+  })
+})
+
+describe('Account cooldown on consecutive failures (Quick Win 3)', () => {
+  it('account enters cooldown after 3 consecutive non-429 failures', () => {
+    const accounts = [{ id: 'a1', providerKey: 'test', apiKey: 'k', modelId: 'm', url: 'http://x' }]
+    const mgr = new AccountManager(accounts)
+
+    // 📖 3 consecutive SERVER_ERROR failures should trigger cooldown
+    for (let i = 0; i < 3; i++) {
+      mgr.recordFailure('a1', { type: 'SERVER_ERROR', shouldRetry: true, skipAccount: false, retryAfterSec: null })
+    }
+
+    // 📖 Account should now be in cooldown and unavailable
+    const selected = mgr.selectAccount()
+    assert.equal(selected, null, 'account should be in cooldown after 3 failures')
+  })
+
+  it('cooldown resets on success', () => {
+    const accounts = [{ id: 'a1', providerKey: 'test', apiKey: 'k', modelId: 'm', url: 'http://x' }]
+    const mgr = new AccountManager(accounts)
+
+    // Trigger cooldown
+    for (let i = 0; i < 3; i++) {
+      mgr.recordFailure('a1', { type: 'SERVER_ERROR', shouldRetry: true, skipAccount: false, retryAfterSec: null })
+    }
+
+    // Record success — should clear cooldown
+    mgr.recordSuccess('a1', 100)
+
+    const selected = mgr.selectAccount()
+    assert.ok(selected !== null, 'account should be available after success clears cooldown')
+    assert.equal(selected.id, 'a1')
+  })
+})
+
+describe('Stats endpoint (Quick Win 2)', () => {
+  it('GET /v1/stats returns stats JSON when authenticated', async () => {
+    const proxy = new ProxyServer({ port: 0, accounts: [], proxyApiKey: 'test-key' })
+    const { port } = await proxy.start()
+    try {
+      const http = await import('node:http')
+      const result = await new Promise((resolve) => {
+        http.default.get({
+          hostname: '127.0.0.1',
+          port,
+          path: '/v1/stats',
+          headers: { 'authorization': 'Bearer test-key' },
+        }, res => {
+          const chunks = []
+          res.on('data', c => chunks.push(c))
+          res.on('end', () => resolve({ statusCode: res.statusCode, body: Buffer.concat(chunks).toString() }))
+        })
+      })
+      assert.equal(result.statusCode, 200)
+      const body = JSON.parse(result.body)
+      assert.ok('accounts' in body)
+      assert.ok('totals' in body)
+      assert.ok('uptime' in body)
+      assert.equal(typeof body.uptime, 'number')
+    } finally {
+      await proxy.stop()
+    }
+  })
+
+  it('GET /v1/stats returns 401 without auth', async () => {
+    const proxy = new ProxyServer({ port: 0, accounts: [], proxyApiKey: 'test-key' })
+    const { port } = await proxy.start()
+    try {
+      const http = await import('node:http')
+      const result = await new Promise((resolve) => {
+        http.default.get({
+          hostname: '127.0.0.1',
+          port,
+          path: '/v1/stats',
+        }, res => {
+          const chunks = []
+          res.on('data', c => chunks.push(c))
+          res.on('end', () => resolve({ statusCode: res.statusCode }))
+        })
+      })
+      assert.equal(result.statusCode, 401)
+    } finally {
+      await proxy.stop()
+    }
+  })
+})

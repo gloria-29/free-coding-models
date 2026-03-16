@@ -36,6 +36,10 @@ import { randomUUID } from 'node:crypto'
  * @returns {object} — OpenAI-compatible request body
  */
 export function translateAnthropicToOpenAI(body) {
+  // 📖 Guard against null/undefined/non-object input
+  if (!body || typeof body !== 'object') return { model: '', messages: [], stream: false }
+  if (!Array.isArray(body.messages)) body = { ...body, messages: [] }
+
   const openaiMessages = []
 
   // 📖 Anthropic "system" field → OpenAI system message
@@ -170,6 +174,11 @@ export function translateOpenAIToAnthropic(openaiResponse, requestModel) {
     }
   }
 
+  // 📖 Fallback: Anthropic requires at least one content block — provide empty text if none
+  if (content.length === 0) {
+    content.push({ type: 'text', text: '' })
+  }
+
   // 📖 Map OpenAI finish_reason → Anthropic stop_reason
   let stopReason = 'end_turn'
   if (choice?.finish_reason === 'stop') stopReason = 'end_turn'
@@ -213,9 +222,16 @@ export function translateOpenAIToAnthropic(openaiResponse, requestModel) {
  * @param {string} requestModel — model from original request
  * @returns {{ transform: Transform, getUsage: () => object }}
  */
+// 📖 Max SSE buffer size to prevent memory exhaustion from malformed streams (1 MB)
+const MAX_SSE_BUFFER = 1 * 1024 * 1024
+
 export function createAnthropicSSETransformer(requestModel) {
   let headerSent = false
-  let blockStarted = false
+  // 📖 Track block indices for proper content_block_start/stop/delta indexing.
+  // nextBlockIndex increments for each new content block (text or tool_use).
+  // currentBlockIndex tracks the index of the most recently opened block.
+  let nextBlockIndex = 0
+  let currentBlockIndex = -1
   let inputTokens = 0
   let outputTokens = 0
   let buffer = ''
@@ -223,6 +239,11 @@ export function createAnthropicSSETransformer(requestModel) {
   const transform = new Transform({
     transform(chunk, encoding, callback) {
       buffer += chunk.toString()
+      // 📖 Guard against unbounded buffer growth from malformed SSE streams
+      if (buffer.length > MAX_SSE_BUFFER) {
+        buffer = ''
+        return callback(new Error('SSE buffer overflow'))
+      }
       const lines = buffer.split('\n')
       // 📖 Keep the last incomplete line in the buffer
       buffer = lines.pop() || ''
@@ -231,9 +252,10 @@ export function createAnthropicSSETransformer(requestModel) {
         if (!line.startsWith('data: ')) continue
         const payload = line.slice(6).trim()
         if (payload === '[DONE]') {
-          // 📖 End of stream — send message_delta + message_stop
-          if (blockStarted) {
-            this.push(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`)
+          // 📖 End of stream — close any open block, then send message_delta + message_stop
+          if (currentBlockIndex >= 0) {
+            this.push(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: currentBlockIndex })}\n\n`)
+            currentBlockIndex = -1
           }
           this.push(`event: message_delta\ndata: ${JSON.stringify({
             type: 'message_delta',
@@ -277,17 +299,18 @@ export function createAnthropicSSETransformer(requestModel) {
 
         // 📖 Text delta
         if (delta.content) {
-          if (!blockStarted) {
-            blockStarted = true
+          if (currentBlockIndex < 0 || nextBlockIndex === 0) {
+            // 📖 Open first text block
+            currentBlockIndex = nextBlockIndex++
             this.push(`event: content_block_start\ndata: ${JSON.stringify({
               type: 'content_block_start',
-              index: 0,
+              index: currentBlockIndex,
               content_block: { type: 'text', text: '' },
             })}\n\n`)
           }
           this.push(`event: content_block_delta\ndata: ${JSON.stringify({
             type: 'content_block_delta',
-            index: 0,
+            index: currentBlockIndex,
             delta: { type: 'text_delta', text: delta.content },
           })}\n\n`)
         }
@@ -296,12 +319,14 @@ export function createAnthropicSSETransformer(requestModel) {
         if (Array.isArray(delta.tool_calls)) {
           for (const tc of delta.tool_calls) {
             if (tc.function?.name) {
-              // 📖 New tool call start
-              const idx = blockStarted ? 1 : 0
-              if (!blockStarted) blockStarted = true
+              // 📖 New tool call — close previous block if open, then start new one
+              if (currentBlockIndex >= 0) {
+                this.push(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: currentBlockIndex })}\n\n`)
+              }
+              currentBlockIndex = nextBlockIndex++
               this.push(`event: content_block_start\ndata: ${JSON.stringify({
                 type: 'content_block_start',
-                index: idx,
+                index: currentBlockIndex,
                 content_block: {
                   type: 'tool_use',
                   id: tc.id || randomUUID(),
@@ -313,17 +338,17 @@ export function createAnthropicSSETransformer(requestModel) {
             if (tc.function?.arguments) {
               this.push(`event: content_block_delta\ndata: ${JSON.stringify({
                 type: 'content_block_delta',
-                index: 0,
+                index: currentBlockIndex >= 0 ? currentBlockIndex : 0,
                 delta: { type: 'input_json_delta', partial_json: tc.function.arguments },
               })}\n\n`)
             }
           }
         }
 
-        // 📖 Handle finish_reason for tool_calls
-        if (choice.finish_reason === 'tool_calls' && blockStarted) {
-          this.push(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`)
-          blockStarted = false
+        // 📖 Handle finish_reason for tool_calls — close ALL open blocks
+        if (choice.finish_reason === 'tool_calls' && currentBlockIndex >= 0) {
+          this.push(`event: content_block_stop\ndata: ${JSON.stringify({ type: 'content_block_stop', index: currentBlockIndex })}\n\n`)
+          currentBlockIndex = -1
         }
       }
       callback()

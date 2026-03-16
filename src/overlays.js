@@ -4,20 +4,28 @@
  *
  * @details
  *   This module centralizes all overlay rendering in one place:
- *   - Settings, Install Endpoints, Help, Log, Smart Recommend, Feature Request, Bug Report, Changelog
+ *   - Settings, Install Endpoints, Help, Log, Smart Recommend, Feedback, Changelog
+ *   - FCM Proxy V2 overlay with tool selector, auto-sync toggle, and cleanup
  *   - Settings diagnostics for provider key tests, including wrapped retry/error details
  *   - Recommend analysis timer orchestration and progress updates
  *
  *   The factory pattern keeps stateful UI logic isolated while still
  *   allowing the main CLI to control shared state and dependencies.
  *
+ *   📖 The proxy overlay rows are: Enable → Active tool → Auto-sync → Port → Cleanup → Install/Restart/Stop/Kill/Logs
+ *   📖 Tool selector cycles through PROXY_SYNCABLE_TOOLS (12 tools from proxy-sync.js)
+ *   📖 Feedback overlay (I key) combines feature requests + bug reports in one left-aligned input
+ *
  *   → Functions:
  *   - `createOverlayRenderers` — returns renderer + analysis helpers
  *
  * @exports { createOverlayRenderers }
+ * @see ./proxy-sync.js — PROXY_SYNCABLE_TOOLS used by the tool selector
+ * @see ./key-handler.js — handles keypresses for all overlay interactions
  */
 
 import { loadChangelog } from './changelog-loader.js'
+import { PROXY_SYNCABLE_TOOLS } from './proxy-sync.js'
 
 export function createOverlayRenderers(state, deps) {
   const {
@@ -270,9 +278,9 @@ export function createOverlayRenderers(state, deps) {
       lines.push(chalk.red(`      ${state.settingsUpdateError}`))
     }
 
-    // 📖 Proxy & Daemon — single row that opens a dedicated overlay
+    // 📖 FCM Proxy V2 — single row that opens a dedicated overlay
     lines.push('')
-    lines.push(`  ${chalk.bold('📡 Proxy & Daemon')}`)
+    lines.push(`  ${chalk.bold('📡 FCM Proxy V2')}`)
     lines.push(`  ${chalk.dim('  ' + '─'.repeat(separatorWidth))}`)
     lines.push('')
 
@@ -280,11 +288,11 @@ export function createOverlayRenderers(state, deps) {
     const proxyStatus = proxySettings.enabled ? chalk.greenBright('Proxy ON') : chalk.dim('Proxy OFF')
     const daemonStatus = state.daemonStatus || 'not-installed'
     let daemonBadge
-    if (daemonStatus === 'running') daemonBadge = chalk.greenBright('Daemon ON')
-    else if (daemonStatus === 'stopped') daemonBadge = chalk.yellow('Daemon stopped')
-    else if (daemonStatus === 'stale' || daemonStatus === 'unhealthy') daemonBadge = chalk.red('Daemon ' + daemonStatus)
-    else daemonBadge = chalk.dim('Daemon OFF')
-    const proxyDaemonRow = `${proxyDaemonBullet}${chalk.bold('Proxy & Daemon settings →').padEnd(44)} ${proxyStatus} ${chalk.dim('•')} ${daemonBadge}`
+    if (daemonStatus === 'running') daemonBadge = chalk.greenBright('Service ON')
+    else if (daemonStatus === 'stopped') daemonBadge = chalk.yellow('Service stopped')
+    else if (daemonStatus === 'stale' || daemonStatus === 'unhealthy') daemonBadge = chalk.red('Service ' + daemonStatus)
+    else daemonBadge = chalk.dim('Service OFF')
+    const proxyDaemonRow = `${proxyDaemonBullet}${chalk.bold('FCM Proxy V2 settings →').padEnd(44)} ${proxyStatus} ${chalk.dim('•')} ${daemonBadge}`
     cursorLineByRow[proxyDaemonRowIdx] = lines.length
     lines.push(state.settingsCursor === proxyDaemonRowIdx ? chalk.bgRgb(20, 45, 60)(proxyDaemonRow) : proxyDaemonRow)
 
@@ -403,7 +411,7 @@ export function createOverlayRenderers(state, deps) {
       : '—'
 
     const selectedConnectionLabel = state.installEndpointsConnectionMode === 'proxy'
-      ? 'FCM Proxy'
+      ? 'FCM Proxy V2'
       : state.installEndpointsConnectionMode === 'direct'
         ? 'Direct Provider'
         : '—'
@@ -619,10 +627,10 @@ export function createOverlayRenderers(state, deps) {
     lines.push(`  ${chalk.yellow('X')}  Toggle token log page  ${chalk.dim('(shows recent request usage from request-log.jsonl)')}`)
     lines.push(`  ${chalk.yellow('Z')}  Cycle tool mode  ${chalk.dim('(OpenCode → Desktop → OpenClaw → Crush → Goose → Pi → Aider → Claude Code → Codex → Gemini → Qwen → OpenHands → Amp)')}`)
     lines.push(`  ${chalk.yellow('F')}  Toggle favorite on selected row  ${chalk.dim('(⭐ pinned at top, persisted)')}`)
-    lines.push(`  ${chalk.yellow('Y')}  Install endpoints  ${chalk.dim('(provider catalog → all tools, Direct or FCM Proxy)')}`)
+    lines.push(`  ${chalk.yellow('Y')}  Install endpoints  ${chalk.dim('(provider catalog → all tools, Direct or FCM Proxy V2)')}`)
     lines.push(`  ${chalk.yellow('Q')}  Smart Recommend  ${chalk.dim('(🎯 find the best model for your task — questionnaire + live analysis)')}`)
-    lines.push(`  ${chalk.rgb(57, 255, 20).bold('J')}  Request Feature  ${chalk.dim('(📝 send anonymous feedback to the project team)')}`)
-    lines.push(`  ${chalk.rgb(255, 87, 51).bold('I')}  Report Bug  ${chalk.dim('(🐛 send anonymous bug report to the project team)')}`)
+    lines.push(`  ${chalk.rgb(255, 87, 51).bold('I')}  Feedback, bugs & requests  ${chalk.dim('(📝 send anonymous feedback, bug reports, or feature requests)')}`)
+    lines.push(`  ${chalk.yellow('J')}  FCM Proxy V2 settings  ${chalk.dim('(📡 open proxy configuration and background service management)')}`)
     lines.push(`  ${chalk.yellow('P')}  Open settings  ${chalk.dim('(manage API keys, provider toggles, proxy, manual update)')}`)
     lines.push(`  ${chalk.yellow('Shift+P')}  Cycle config profile  ${chalk.dim('(switch between saved profiles live)')}`)
     lines.push(`  ${chalk.yellow('Shift+S')}  Save current config as a named profile  ${chalk.dim('(inline prompt — type name + Enter)')}`)
@@ -1044,117 +1052,10 @@ export function createOverlayRenderers(state, deps) {
     }, PING_RATE)
   }
 
-  // ─── Feature Request overlay renderer ─────────────────────────────────────
-  // 📖 renderFeatureRequest: Draw the overlay for anonymous Discord feedback.
-  // 📖 Shows an input field where users can type feature requests, then sends to Discord webhook.
-  function renderFeatureRequest() {
-    const EL = '\x1b[K'
-    const lines = []
-
-    // 📖 Calculate available space for multi-line input (dynamic based on terminal width)
-    const maxInputWidth = state.terminalCols - 8 // 8 = padding (4 spaces each side)
-    const maxInputLines = 10 // Show up to 10 lines of input
-    
-    // 📖 Split buffer into lines for display (with wrapping)
-    const wrapText = (text, width) => {
-      const words = text.split(' ')
-      const lines = []
-      let currentLine = ''
-      
-      for (const word of words) {
-        const testLine = currentLine ? currentLine + ' ' + word : word
-        if (testLine.length <= width) {
-          currentLine = testLine
-        } else {
-          if (currentLine) lines.push(currentLine)
-          currentLine = word
-        }
-      }
-      if (currentLine) lines.push(currentLine)
-      return lines
-    }
-
-    const inputLines = wrapText(state.featureRequestBuffer, maxInputWidth)
-    const displayLines = inputLines.slice(0, maxInputLines)
-
-    // 📖 Branding header
-    lines.push('')
-    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
-    lines.push(`  ${chalk.bold.rgb(57, 255, 20)('📝 Feature Request')}`)
-    lines.push('')
-    lines.push(chalk.dim('  — send anonymous feedback to the project team'))
-    lines.push('')
-    
-    // 📖 Status messages (if any)
-    if (state.featureRequestStatus === 'sending') {
-      lines.push(`  ${chalk.yellow('⏳ Sending...')}`)
-      lines.push('')
-    } else if (state.featureRequestStatus === 'success') {
-      lines.push(`  ${chalk.greenBright.bold('✅ Successfully sent!')} ${chalk.dim('Closing overlay in 3 seconds...')}`)
-      lines.push('')
-      lines.push(`  ${chalk.dim('Thank you for your feedback! Your feature request has been sent to the project team.')}`)
-      lines.push('')
-    } else if (state.featureRequestStatus === 'error') {
-      lines.push(`  ${chalk.red('❌ Error:')} ${chalk.yellow(state.featureRequestError || 'Failed to send')}`)
-      lines.push(`  ${chalk.dim('Press Backspace to edit, or Esc to close')}`)
-      lines.push('')
-    } else {
-      lines.push(`  ${chalk.dim('Type your feature request below. Press Enter to send, Esc to cancel.')}`)
-      lines.push(`  ${chalk.dim('Your message will be sent anonymously to the project team.')}`)
-      lines.push('')
-    }
-
-    // 📖 Input box with border
-    lines.push(chalk.dim(`  ┌─ ${chalk.cyan('Message')} ${chalk.dim(`(${state.featureRequestBuffer.length}/500 chars)`)} ─${'─'.repeat(maxInputWidth - 22)}┐`))
-    
-    // 📖 Display input lines (or placeholder if empty)
-    if (displayLines.length === 0 && state.featureRequestStatus === 'idle') {
-      lines.push(chalk.dim(`  │${' '.repeat(maxInputWidth)}│`))
-      lines.push(chalk.dim(`  │  ${chalk.white.italic('Type your message here...')}${' '.repeat(Math.max(0, maxInputWidth - 28))}│`))
-    } else {
-      for (const line of displayLines) {
-        const padded = line.padEnd(maxInputWidth)
-        lines.push(`  │ ${chalk.white(padded)} │`)
-      }
-    }
-    
-    // 📖 Fill remaining space if needed
-    const linesToFill = Math.max(0, maxInputLines - Math.max(displayLines.length, 1))
-    for (let i = 0; i < linesToFill; i++) {
-      lines.push(chalk.dim(`  │${' '.repeat(maxInputWidth)}│`))
-    }
-    
-    // 📖 Cursor indicator (only when not sending/success)
-    if (state.featureRequestStatus === 'idle' || state.featureRequestStatus === 'error') {
-      // Add cursor indicator to the last line
-      if (lines.length > 0 && displayLines.length > 0) {
-        const lastLineIdx = lines.findIndex(l => l.includes('│ ') && !l.includes('Message'))
-        if (lastLineIdx >= 0 && lastLineIdx < lines.length) {
-          // Add cursor blink
-          const lastLine = lines[lastLineIdx]
-          if (lastLine.includes('│')) {
-            lines[lastLineIdx] = lastLine.replace(/\s+│$/, chalk.rgb(57, 255, 20).bold('▏') + ' │')
-          }
-        }
-      }
-    }
-    
-    lines.push(chalk.dim(`  └${'─'.repeat(maxInputWidth + 2)}┘`))
-    
-    lines.push('')
-    lines.push(chalk.dim('  Enter Send  •  Esc Cancel  •  Backspace Delete'))
-
-    // 📖 Apply overlay tint and return
-    const FEATURE_REQUEST_OVERLAY_BG = chalk.bgRgb(0, 0, 0) // Dark blue-ish background (RGB: 26, 26, 46)
-    const tintedLines = tintOverlayLines(lines, FEATURE_REQUEST_OVERLAY_BG, state.terminalCols)
-    const cleared = tintedLines.map(l => l + EL)
-    return cleared.join('\n')
-  }
-
-  // ─── Bug Report overlay renderer ─────────────────────────────────────────
-  // 📖 renderBugReport: Draw the overlay for anonymous Discord bug reports.
-  // 📖 Shows an input field where users can type bug reports, then sends to Discord webhook.
-  function renderBugReport() {
+  // ─── Feedback overlay renderer ────────────────────────────────────────────
+  // 📖 renderFeedback: Draw the overlay for anonymous Discord feedback.
+  // 📖 Shows an input field where users can type feedback, bug reports, or any comments.
+  function renderFeedback() {
     const EL = '\x1b[K'
     const lines = []
 
@@ -1187,9 +1088,9 @@ export function createOverlayRenderers(state, deps) {
     // 📖 Branding header
     lines.push('')
     lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
-    lines.push(`  ${chalk.bold.rgb(255, 87, 51)('🐛 Bug Report')}`)
+    lines.push(`  ${chalk.bold.rgb(57, 255, 20)('📝 Feedback, bugs & requests')}`)
     lines.push('')
-    lines.push(chalk.dim('  — send anonymous bug reports to the project team'))
+    lines.push(chalk.dim("  — don't hesitate to send us feedback, bug reports, or just your feeling about the app"))
     lines.push('')
     
     // 📖 Status messages (if any)
@@ -1199,55 +1100,35 @@ export function createOverlayRenderers(state, deps) {
     } else if (state.bugReportStatus === 'success') {
       lines.push(`  ${chalk.greenBright.bold('✅ Successfully sent!')} ${chalk.dim('Closing overlay in 3 seconds...')}`)
       lines.push('')
-      lines.push(`  ${chalk.dim('Thank you for your feedback! Your bug report has been sent to the project team.')}`)
+      lines.push(`  ${chalk.dim('Thank you for your feedback! It has been sent to the project team.')}`)
       lines.push('')
     } else if (state.bugReportStatus === 'error') {
       lines.push(`  ${chalk.red('❌ Error:')} ${chalk.yellow(state.bugReportError || 'Failed to send')}`)
       lines.push(`  ${chalk.dim('Press Backspace to edit, or Esc to close')}`)
       lines.push('')
     } else {
-      lines.push(`  ${chalk.dim('Describe the bug you encountered. Press Enter to send, Esc to cancel.')}`)
+      lines.push(`  ${chalk.dim('Type your feedback below. Press Enter to send, Esc to cancel.')}`)
       lines.push(`  ${chalk.dim('Your message will be sent anonymously to the project team.')}`)
       lines.push('')
     }
 
-    // 📖 Input box with border
-    lines.push(chalk.dim(`  ┌─ ${chalk.cyan('Bug Details')} ${chalk.dim(`(${state.bugReportBuffer.length}/500 chars)`)} ─${'─'.repeat(maxInputWidth - 24)}┐`))
-    
-    // 📖 Display input lines (or placeholder if empty)
-    if (displayLines.length === 0 && state.bugReportStatus === 'idle') {
-      lines.push(chalk.dim(`  │${' '.repeat(maxInputWidth)}│`))
-      lines.push(chalk.dim(`  │  ${chalk.white.italic('Describe what happened...')}${' '.repeat(Math.max(0, maxInputWidth - 31))}│`))
-    } else {
+    // 📖 Simple input area – left-aligned, framed by horizontal lines
+    lines.push(`  ${chalk.cyan('Message')} (${state.bugReportBuffer.length}/500 chars)`)
+    lines.push(`  ${chalk.dim('─'.repeat(maxInputWidth))}`)
+    // 📖 Input lines — left-aligned, or placeholder when empty
+    if (displayLines.length > 0) {
       for (const line of displayLines) {
-        const padded = line.padEnd(maxInputWidth)
-        lines.push(`  │ ${chalk.white(padded)} │`)
+        lines.push(`    ${line}`)
       }
-    }
-    
-    // 📖 Fill remaining space if needed
-    const linesToFill = Math.max(0, maxInputLines - Math.max(displayLines.length, 1))
-    for (let i = 0; i < linesToFill; i++) {
-      lines.push(chalk.dim(`  │${' '.repeat(maxInputWidth)}│`))
-    }
-    
-    // 📖 Cursor indicator (only when not sending/success)
-    if (state.bugReportStatus === 'idle' || state.bugReportStatus === 'error') {
-      // Add cursor indicator to the last line
-      if (lines.length > 0 && displayLines.length > 0) {
-        const lastLineIdx = lines.findIndex(l => l.includes('│ ') && !l.includes('Bug Details'))
-        if (lastLineIdx >= 0 && lastLineIdx < lines.length) {
-          // Add cursor blink
-          const lastLine = lines[lastLineIdx]
-          if (lastLine.includes('│')) {
-            lines[lastLineIdx] = lastLine.replace(/\s+│$/, chalk.rgb(255, 87, 51).bold('▏') + ' │')
-          }
-        }
+      // 📖 Show cursor on last line
+      if (state.bugReportStatus === 'idle' || state.bugReportStatus === 'error') {
+        lines[lines.length - 1] += chalk.cyanBright('▏')
       }
+    } else {
+      const placeholderBR = state.bugReportStatus === 'idle' ? chalk.white.italic('Type your message here...') : ''
+      lines.push(`    ${placeholderBR}${chalk.cyanBright('▏')}`)
     }
-    
-    lines.push(chalk.dim(`  └${'─'.repeat(maxInputWidth + 2)}┘`))
-    
+    lines.push(`  ${chalk.dim('─'.repeat(maxInputWidth))}`)
     lines.push('')
     lines.push(chalk.dim('  Enter Send  •  Esc Cancel  •  Backspace Delete'))
 
@@ -1380,10 +1261,10 @@ export function createOverlayRenderers(state, deps) {
     return cleared.join('\n')
   }
 
-  // ─── Proxy & Daemon overlay renderer ────────────────────────────────────────
-  // 📖 renderProxyDaemon: Dedicated full-page overlay for proxy configuration
-  // 📖 and background daemon management. Opened from Settings → "Proxy & Daemon settings →".
-  // 📖 Contains all proxy toggles, daemon status/actions, explanations, and emergency kill.
+  // ─── FCM Proxy V2 overlay renderer ──────────────────────────────────────────
+  // 📖 renderProxyDaemon: Dedicated full-page overlay for FCM Proxy V2 configuration
+  // 📖 and background service management. Opened from Settings → "FCM Proxy V2 settings →".
+  // 📖 Contains all proxy toggles, service status/actions, explanations, and emergency kill.
   function renderProxyDaemon() {
     const EL = '\x1b[K'
     const lines = []
@@ -1392,14 +1273,15 @@ export function createOverlayRenderers(state, deps) {
 
     // 📖 Row indices — these control cursor navigation
     const ROW_PROXY_ENABLED = 0
-    const ROW_PROXY_SYNC = 1
-    const ROW_PROXY_PORT = 2
-    const ROW_PROXY_CLEANUP = 3
-    const ROW_DAEMON_INSTALL = 4
-    const ROW_DAEMON_RESTART = 5
-    const ROW_DAEMON_STOP = 6
-    const ROW_DAEMON_KILL = 7
-    const ROW_DAEMON_LOGS = 8
+    const ROW_PROXY_TOOL = 1
+    const ROW_PROXY_SYNC = 2
+    const ROW_PROXY_PORT = 3
+    const ROW_PROXY_CLEANUP = 4
+    const ROW_DAEMON_INSTALL = 5
+    const ROW_DAEMON_RESTART = 6
+    const ROW_DAEMON_STOP = 7
+    const ROW_DAEMON_KILL = 8
+    const ROW_DAEMON_LOGS = 9
 
     const daemonStatus = state.daemonStatus || 'not-installed'
     const daemonInfo = state.daemonInfo
@@ -1412,8 +1294,11 @@ export function createOverlayRenderers(state, deps) {
 
     // 📖 Header
     lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
-    lines.push(`  ${chalk.bold('📡 Proxy & Daemon Manager')}`)
+    lines.push(`  ${chalk.bold('📡 FCM Proxy V2 Manager')}`)
     lines.push(`  ${chalk.dim('— Esc back to Settings • ↑↓ navigate • Enter select')}`)
+    lines.push('')
+    lines.push(`  ${chalk.bgRed.white.bold(' ⚠ EXPERIMENTAL ')} ${chalk.red('This feature is under active development and may not work as expected.')}`)
+    lines.push(`  ${chalk.red('Found a bug? Press')} ${chalk.bold.white('I')} ${chalk.red('on the main screen or join our Discord to report issues & suggest improvements.')}`)
     lines.push('')
 
     // 📖 Feedback message (auto-clears after 5s)
@@ -1433,6 +1318,11 @@ export function createOverlayRenderers(state, deps) {
     lines.push(`  ${chalk.dim('  to this proxy which handles key rotation, rate limiting, and failover.')}`)
     lines.push('')
 
+    // 📖 Resolve active tool for proxy sync (persisted or fallback to Z-mode)
+    const activeProxyTool = proxySettings.activeTool || state.mode || 'opencode'
+    const activeToolMeta = getToolMeta(activeProxyTool)
+    const activeToolLabel = `${activeToolMeta.emoji} ${activeToolMeta.label}`
+
     // 📖 Row 0: Proxy enabled toggle
     const r0b = state.proxyDaemonCursor === ROW_PROXY_ENABLED ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
     const r0val = proxySettings.enabled ? chalk.greenBright('Enabled') : chalk.dim('Disabled (opt-in)')
@@ -1440,36 +1330,42 @@ export function createOverlayRenderers(state, deps) {
     cursorLineByRow[ROW_PROXY_ENABLED] = lines.length
     lines.push(state.proxyDaemonCursor === ROW_PROXY_ENABLED ? chalk.bgRgb(20, 45, 60)(r0) : r0)
 
-    // 📖 Row 1: Sync to OpenCode
-    const r1b = state.proxyDaemonCursor === ROW_PROXY_SYNC ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-    const r1val = proxySettings.syncToOpenCode ? chalk.greenBright('Enabled') : chalk.dim('Disabled')
-    const r1 = `${r1b}${chalk.bold('Persist proxy in OpenCode').padEnd(44)} ${r1val}`
-    cursorLineByRow[ROW_PROXY_SYNC] = lines.length
-    lines.push(state.proxyDaemonCursor === ROW_PROXY_SYNC ? chalk.bgRgb(20, 45, 60)(r1) : r1)
+    // 📖 Row 1: Active tool selector — cycles through proxy-syncable tools
+    const r1b = state.proxyDaemonCursor === ROW_PROXY_TOOL ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+    const r1 = `${r1b}${chalk.bold('Active tool').padEnd(44)} ${chalk.cyanBright(activeToolLabel)} ${chalk.dim('← Enter to cycle')}`
+    cursorLineByRow[ROW_PROXY_TOOL] = lines.length
+    lines.push(state.proxyDaemonCursor === ROW_PROXY_TOOL ? chalk.bgRgb(20, 45, 60)(r1) : r1)
 
-    // 📖 Row 2: Preferred port
-    const r2b = state.proxyDaemonCursor === ROW_PROXY_PORT ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-    const r2val = state.settingsProxyPortEditMode && state.proxyDaemonCursor === ROW_PROXY_PORT
+    // 📖 Row 2: Auto-sync proxy config to active tool
+    const r2b = state.proxyDaemonCursor === ROW_PROXY_SYNC ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+    const r2val = proxySettings.syncToOpenCode ? chalk.greenBright('Enabled') : chalk.dim('Disabled')
+    const r2 = `${r2b}${chalk.bold(`Auto-sync proxy to ${activeToolMeta.label}`).padEnd(44)} ${r2val}`
+    cursorLineByRow[ROW_PROXY_SYNC] = lines.length
+    lines.push(state.proxyDaemonCursor === ROW_PROXY_SYNC ? chalk.bgRgb(20, 45, 60)(r2) : r2)
+
+    // 📖 Row 3: Preferred port
+    const r3b = state.proxyDaemonCursor === ROW_PROXY_PORT ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+    const r3val = state.settingsProxyPortEditMode && state.proxyDaemonCursor === ROW_PROXY_PORT
       ? chalk.cyanBright(`${state.settingsProxyPortBuffer}▏`)
       : (proxySettings.preferredPort === 0 ? chalk.dim('auto (OS-assigned)') : chalk.green(String(proxySettings.preferredPort)))
-    const r2 = `${r2b}${chalk.bold('Preferred proxy port').padEnd(44)} ${r2val}`
+    const r3 = `${r3b}${chalk.bold('Preferred proxy port').padEnd(44)} ${r3val}`
     cursorLineByRow[ROW_PROXY_PORT] = lines.length
-    lines.push(state.proxyDaemonCursor === ROW_PROXY_PORT ? chalk.bgRgb(20, 45, 60)(r2) : r2)
+    lines.push(state.proxyDaemonCursor === ROW_PROXY_PORT ? chalk.bgRgb(20, 45, 60)(r3) : r3)
 
-    // 📖 Row 3: Clean OpenCode proxy config
-    const r3b = state.proxyDaemonCursor === ROW_PROXY_CLEANUP ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-    const r3 = `${r3b}${chalk.bold('Clean OpenCode proxy config').padEnd(44)} ${chalk.dim('Enter → removes fcm-proxy from opencode.json')}`
+    // 📖 Row 4: Clean tool proxy config
+    const r4b = state.proxyDaemonCursor === ROW_PROXY_CLEANUP ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+    const r4 = `${r4b}${chalk.bold(`Clean ${activeToolMeta.label} proxy config`).padEnd(44)} ${chalk.dim('Enter → removes all fcm-* entries')}`
     cursorLineByRow[ROW_PROXY_CLEANUP] = lines.length
-    lines.push(state.proxyDaemonCursor === ROW_PROXY_CLEANUP ? chalk.bgRgb(45, 30, 30)(r3) : r3)
+    lines.push(state.proxyDaemonCursor === ROW_PROXY_CLEANUP ? chalk.bgRgb(45, 30, 30)(r4) : r4)
 
     // ────────────────────────────── DAEMON SECTION ─────────────────────────────
     lines.push('')
-    lines.push(`  ${chalk.bold('📡 Background Daemon')}`)
+    lines.push(`  ${chalk.bold('📡 FCM Proxy V2 Background Service')}`)
     lines.push(`  ${chalk.dim('  ─────────────────────────────────────────────')}`)
     lines.push('')
-    lines.push(`  ${chalk.dim('  The daemon is a persistent background service that keeps the proxy')}`)
-    lines.push(`  ${chalk.dim('  running 24/7 — even when the TUI is closed or after a reboot.')}`)
-    lines.push(`  ${chalk.dim('  Claude Code, Gemini CLI, and all tools stay connected at all times.')}`)
+    lines.push(`  ${chalk.dim('  The background service keeps FCM Proxy V2 running 24/7 — even when')}`)
+    lines.push(`  ${chalk.dim('  the TUI is closed or after a reboot. Claude Code, Gemini CLI, and')}`)
+    lines.push(`  ${chalk.dim('  all tools stay connected at all times.')}`)
     lines.push('')
 
     // 📖 Status display
@@ -1478,9 +1374,9 @@ export function createOverlayRenderers(state, deps) {
       daemonStatusLine += chalk.greenBright('● Running')
       if (daemonInfo) daemonStatusLine += chalk.dim(` — PID ${daemonInfo.pid} • Port ${daemonInfo.port} • ${daemonInfo.accountCount || '?'} accounts • ${daemonInfo.modelCount || '?'} models`)
     } else if (daemonStatus === 'stopped') {
-      daemonStatusLine += chalk.yellow('○ Stopped') + chalk.dim(' — service installed but daemon not running')
+      daemonStatusLine += chalk.yellow('○ Stopped') + chalk.dim(' — service installed but not running')
     } else if (daemonStatus === 'stale') {
-      daemonStatusLine += chalk.red('⚠ Stale') + chalk.dim(' — daemon crashed, PID no longer alive')
+      daemonStatusLine += chalk.red('⚠ Stale') + chalk.dim(' — service crashed, PID no longer alive')
     } else if (daemonStatus === 'unhealthy') {
       daemonStatusLine += chalk.red('⚠ Unhealthy') + chalk.dim(' — PID alive but health check failed')
     } else {
@@ -1490,8 +1386,8 @@ export function createOverlayRenderers(state, deps) {
 
     // 📖 Version mismatch warning
     if (daemonInfo?.version && daemonInfo.version !== LOCAL_VERSION) {
-      lines.push(`  ${chalk.yellow(`  ⚠ Version mismatch: daemon v${daemonInfo.version} vs FCM v${LOCAL_VERSION}`)}`)
-      lines.push(`  ${chalk.dim('    Restart or reinstall the daemon to apply the update.')}`)
+      lines.push(`  ${chalk.yellow(`  ⚠ Version mismatch: service v${daemonInfo.version} vs FCM v${LOCAL_VERSION}`)}`)
+      lines.push(`  ${chalk.dim('    Restart or reinstall the service to apply the update.')}`)
     }
 
     // 📖 Uptime
@@ -1505,42 +1401,42 @@ export function createOverlayRenderers(state, deps) {
 
     lines.push('')
 
-    // 📖 Row 4: Install / Uninstall
-    const r4b = state.proxyDaemonCursor === ROW_DAEMON_INSTALL ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-    const r4label = daemonIsInstalled ? 'Uninstall daemon' : 'Install background daemon'
-    const r4hint = daemonIsInstalled
+    // 📖 Row 5: Install / Uninstall
+    const d0b = state.proxyDaemonCursor === ROW_DAEMON_INSTALL ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+    const d0label = daemonIsInstalled ? 'Uninstall service' : 'Install background service'
+    const d0hint = daemonIsInstalled
       ? chalk.dim('Enter → stop service + remove config')
       : chalk.dim('Enter → install as OS service (launchd/systemd)')
-    const r4 = `${r4b}${chalk.bold(r4label).padEnd(44)} ${r4hint}`
+    const d0 = `${d0b}${chalk.bold(d0label).padEnd(44)} ${d0hint}`
     cursorLineByRow[ROW_DAEMON_INSTALL] = lines.length
-    lines.push(state.proxyDaemonCursor === ROW_DAEMON_INSTALL ? chalk.bgRgb(daemonIsInstalled ? 45 : 20, daemonIsInstalled ? 30 : 45, daemonIsInstalled ? 30 : 40)(r4) : r4)
+    lines.push(state.proxyDaemonCursor === ROW_DAEMON_INSTALL ? chalk.bgRgb(daemonIsInstalled ? 45 : 20, daemonIsInstalled ? 30 : 45, daemonIsInstalled ? 30 : 40)(d0) : d0)
 
-    // 📖 Rows 5-8 only shown when daemon is installed
+    // 📖 Rows 6-9 only shown when service is installed
     if (daemonIsInstalled) {
-      // 📖 Row 5: Restart daemon
-      const r5b = state.proxyDaemonCursor === ROW_DAEMON_RESTART ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-      const r5 = `${r5b}${chalk.bold('Restart daemon').padEnd(44)} ${chalk.dim('Enter → stop + start via OS service manager')}`
+      // 📖 Row 6: Restart
+      const d1b = state.proxyDaemonCursor === ROW_DAEMON_RESTART ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+      const d1 = `${d1b}${chalk.bold('Restart service').padEnd(44)} ${chalk.dim('Enter → stop + start via OS service manager')}`
       cursorLineByRow[ROW_DAEMON_RESTART] = lines.length
-      lines.push(state.proxyDaemonCursor === ROW_DAEMON_RESTART ? chalk.bgRgb(20, 45, 60)(r5) : r5)
+      lines.push(state.proxyDaemonCursor === ROW_DAEMON_RESTART ? chalk.bgRgb(20, 45, 60)(d1) : d1)
 
-      // 📖 Row 6: Stop daemon (SIGTERM)
-      const r6b = state.proxyDaemonCursor === ROW_DAEMON_STOP ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-      const r6warn = daemonIsInstalled ? chalk.dim(' (service may auto-restart)') : ''
-      const r6 = `${r6b}${chalk.bold('Stop daemon').padEnd(44)} ${chalk.dim('Enter → graceful shutdown (SIGTERM)')}${r6warn}`
+      // 📖 Row 7: Stop (SIGTERM)
+      const d2b = state.proxyDaemonCursor === ROW_DAEMON_STOP ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+      const d2warn = chalk.dim(' (service may auto-restart)')
+      const d2 = `${d2b}${chalk.bold('Stop service').padEnd(44)} ${chalk.dim('Enter → graceful shutdown (SIGTERM)')}${d2warn}`
       cursorLineByRow[ROW_DAEMON_STOP] = lines.length
-      lines.push(state.proxyDaemonCursor === ROW_DAEMON_STOP ? chalk.bgRgb(45, 40, 20)(r6) : r6)
+      lines.push(state.proxyDaemonCursor === ROW_DAEMON_STOP ? chalk.bgRgb(45, 40, 20)(d2) : d2)
 
-      // 📖 Row 7: Force kill (SIGKILL) — emergency
-      const r7b = state.proxyDaemonCursor === ROW_DAEMON_KILL ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-      const r7 = `${r7b}${chalk.bold.red('Force kill daemon').padEnd(44)} ${chalk.dim('Enter → SIGKILL — emergency only')}`
+      // 📖 Row 8: Force kill (SIGKILL) — emergency
+      const d3b = state.proxyDaemonCursor === ROW_DAEMON_KILL ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+      const d3 = `${d3b}${chalk.bold.red('Force kill service').padEnd(44)} ${chalk.dim('Enter → SIGKILL — emergency only')}`
       cursorLineByRow[ROW_DAEMON_KILL] = lines.length
-      lines.push(state.proxyDaemonCursor === ROW_DAEMON_KILL ? chalk.bgRgb(60, 20, 20)(r7) : r7)
+      lines.push(state.proxyDaemonCursor === ROW_DAEMON_KILL ? chalk.bgRgb(60, 20, 20)(d3) : d3)
 
-      // 📖 Row 8: View logs
-      const r8b = state.proxyDaemonCursor === ROW_DAEMON_LOGS ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-      const r8 = `${r8b}${chalk.bold('View daemon logs').padEnd(44)} ${chalk.dim('Enter → show last 50 log lines')}`
+      // 📖 Row 9: View logs
+      const d4b = state.proxyDaemonCursor === ROW_DAEMON_LOGS ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+      const d4 = `${d4b}${chalk.bold('View service logs').padEnd(44)} ${chalk.dim('Enter → show last 50 log lines')}`
       cursorLineByRow[ROW_DAEMON_LOGS] = lines.length
-      lines.push(state.proxyDaemonCursor === ROW_DAEMON_LOGS ? chalk.bgRgb(30, 30, 50)(r8) : r8)
+      lines.push(state.proxyDaemonCursor === ROW_DAEMON_LOGS ? chalk.bgRgb(30, 30, 50)(d4) : d4)
     }
 
     // ────────────────────────────── INFO SECTION ───────────────────────────────
@@ -1552,10 +1448,10 @@ export function createOverlayRenderers(state, deps) {
     lines.push(`  ${chalk.dim('  📖 External tools connect to it as if it were OpenAI/Anthropic.')}`)
     lines.push(`  ${chalk.dim('  📖 The proxy rotates between your API keys across all providers.')}`)
     lines.push('')
-    lines.push(`  ${chalk.dim('  📖 The daemon adds persistence: install it once, and the proxy')}`)
+    lines.push(`  ${chalk.dim('  📖 The background service adds persistence: install it once, and the proxy')}`)
     lines.push(`  ${chalk.dim('  📖 starts automatically at login and survives reboots.')}`)
     lines.push('')
-    lines.push(`  ${chalk.dim('  📖 Claude Code support: the daemon translates Anthropic wire format')}`)
+    lines.push(`  ${chalk.dim('  📖 Claude Code support: FCM Proxy V2 translates Anthropic wire format')}`)
     lines.push(`  ${chalk.dim('  📖 (POST /v1/messages) to OpenAI format for upstream providers.')}`)
     lines.push('')
     if (process.platform === 'darwin') {
@@ -1563,7 +1459,7 @@ export function createOverlayRenderers(state, deps) {
     } else if (process.platform === 'linux') {
       lines.push(`  ${chalk.dim('  📦 Linux: systemd user service at ~/.config/systemd/user/fcm-proxy.service')}`)
     } else {
-      lines.push(`  ${chalk.dim('  ⚠ Windows: daemon not supported — use in-process proxy (starts with TUI)')}`)
+      lines.push(`  ${chalk.dim('  ⚠ Windows: background service not supported — use in-process proxy (starts with TUI)')}`)
     }
     lines.push('')
 
@@ -1598,8 +1494,7 @@ export function createOverlayRenderers(state, deps) {
     renderHelp,
     renderLog,
     renderRecommend,
-    renderFeatureRequest,
-    renderBugReport,
+    renderFeedback,
     renderChangelog,
     startRecommendAnalysis,
     stopRecommendAnalysis,

@@ -69,8 +69,8 @@ By Vanessa Depraute
 
 - **🎯 Coding-focused** — Only LLM models optimized for code generation, not chat or vision
 - **🌐 Multi-provider** — Models from NVIDIA NIM, Groq, Cerebras, SambaNova, OpenRouter, Hugging Face Inference, Replicate, DeepInfra, Fireworks AI, Codestral, Hyperbolic, Scaleway, Google AI, SiliconFlow, Together AI, Cloudflare Workers AI, Perplexity API, Alibaba Cloud (DashScope), ZAI, and iFlow
-- **⚙️ Settings screen** — Press `P` to manage provider API keys, enable/disable providers, access the Proxy & Daemon manager, and check/install updates
-- **📡 Proxy & Daemon** — Built-in reverse proxy with multi-key rotation, rate-limit failover, and Anthropic wire format translation for Claude Code. Optional always-on daemon mode (`launchd`/`systemd`) keeps the proxy running 24/7 — even without the TUI. Dedicated overlay with full status, restart, stop, force-kill, and log viewer.
+- **⚙️ Settings screen** — Press `P` to manage provider API keys, enable/disable providers, access FCM Proxy V2 settings, and check/install updates
+- **📡 FCM Proxy V2** — Built-in reverse proxy with multi-key rotation, rate-limit failover, and Anthropic wire format translation for Claude Code. Optional always-on background service (`launchd`/`systemd`) keeps the proxy running 24/7 — even without the TUI. Dedicated overlay with full status, restart, stop, force-kill, and log viewer.
 - **🚀 Parallel pings** — All models tested simultaneously via native `fetch`
 - **📊 Real-time animation** — Watch latency appear live in alternate screen buffer
 - **🏆 Smart ranking** — Top 3 fastest models highlighted with medals 🥇🥈🥉
@@ -87,7 +87,7 @@ By Vanessa Depraute
 - **💻 OpenCode integration** — Auto-detects NIM setup, sets model as default, launches OpenCode
 - **🦞 OpenClaw integration** — Sets selected model as default provider in `~/.openclaw/openclaw.json`
 - **🧰 Public tool launchers** — `Enter` auto-configures and launches 10+ tools: `OpenCode CLI`, `OpenCode Desktop`, `OpenClaw`, `Crush`, `Goose`, `Aider`, `Claude Code`, `Codex`, `Gemini`, `Qwen`, `OpenHands`, `Amp`, and `Pi`. All tools auto-select the chosen model on launch.
-- **🔌 Install Endpoints flow** — Press `Y` to install one configured provider into any of the 13 supported tools, with a choice between **Direct Provider** (pure API) or **FCM Proxy** (key rotation + usage tracking), then pick all models or a curated subset
+- **🔌 Install Endpoints flow** — Press `Y` to install one configured provider into any of the 13 supported tools, with a choice between **Direct Provider** (pure API) or **FCM Proxy V2** (key rotation + usage tracking), then pick all models or a curated subset
 - **📝 Feature Request (J key)** — Send anonymous feedback directly to the project team
 - **🐛 Bug Report (I key)** — Send anonymous bug reports directly to the project team
  - **🎨 Clean output** — Zero scrollback pollution, interface stays open until Ctrl+C
@@ -554,11 +554,11 @@ Stability = 0.30 × p95_score
 
 ---
 
-## 📡 Proxy & Background Daemon
+## 📡 FCM Proxy V2
 
-`free-coding-models` includes a local reverse proxy that merges all your provider API keys into one endpoint. Optional daemon mode keeps it running 24/7 — even without the TUI.
+`free-coding-models` includes a local reverse proxy that merges all your provider API keys into one endpoint. Optional background service mode keeps it running 24/7 — even without the TUI.
 
-> **Disabled by default** — enable in Settings (`P`) → Proxy & Daemon settings.
+> **Disabled by default** — enable in Settings (`P`) → FCM Proxy V2 settings.
 
 ### What the proxy does
 
@@ -570,9 +570,9 @@ Stability = 0.30 × p95_score
 | **Anthropic translation** | Claude Code sends `POST /v1/messages` — the proxy translates to OpenAI format upstream |
 | **Path normalization** | Converts non-standard API paths (ZAI, Cloudflare) to standard `/v1/` calls |
 
-### In-process vs Daemon mode
+### In-process vs Background Service mode
 
-| | In-process (default) | Daemon (always-on) |
+| | In-process (default) | Background Service (always-on) |
 |---|---|---|
 | **Lifetime** | Starts/stops with TUI | Survives reboots |
 | **Use case** | Quick sessions | 24/7 access from any tool |
@@ -584,8 +584,8 @@ Stability = 0.30 × p95_score
 
 **Via TUI (recommended):**
 1. Press `P` to open Settings
-2. Select **Proxy & Daemon settings →** and press Enter
-3. Enable **Proxy mode**, then select **Install background daemon**
+2. Select **FCM Proxy V2 settings →** and press Enter
+3. Enable **Proxy mode**, then select **Install background service**
 
 **Via CLI:**
 ```bash
@@ -594,15 +594,18 @@ free-coding-models daemon status      # Check running status
 free-coding-models daemon restart     # Restart after config changes
 free-coding-models daemon stop        # Graceful stop (SIGTERM)
 free-coding-models daemon uninstall   # Remove OS service completely
-free-coding-models daemon logs        # Show recent daemon logs
+free-coding-models daemon logs        # Show recent service logs
 ```
 
-### Daemon management
+### Service management
 
-The dedicated **Proxy & Daemon** overlay (from Settings → Enter) provides full control:
+The dedicated **FCM Proxy V2** overlay (accessible via `J` from main TUI, or Settings → Enter) provides full control:
 
+- **Active tool selector** — Choose which AI coding tool receives proxy config (cycles through all 12 syncable tools)
+- **Auto-sync toggle** — Automatically write the `fcm-proxy` provider to the active tool's config when the proxy starts
+- **Cleanup** — Remove `fcm-proxy` entries from the active tool's config (works for any syncable tool)
 - **Status display** — Running/Stopped/Stale/Unhealthy with PID, port, uptime, account/model counts
-- **Version mismatch detection** — warns if daemon version differs from installed FCM version
+- **Version mismatch detection** — warns if service version differs from installed FCM version
 - **Restart** — stop + start via the OS service manager
 - **Stop** — graceful SIGTERM (service may auto-restart if installed)
 - **Force kill** — emergency SIGKILL for stuck processes
@@ -620,21 +623,23 @@ The dedicated **Proxy & Daemon** overlay (from Settings → Enter) provides full
 
 | File | Purpose |
 |------|---------|
-| `~/.free-coding-models.json` | API keys, proxy settings, daemon consent |
-| `~/.free-coding-models/daemon.json` | Status file (PID, port, token) — written by daemon |
-| `~/.free-coding-models/daemon-stdout.log` | Daemon output log |
+| `~/.free-coding-models.json` | API keys, proxy settings, service consent |
+| `~/.free-coding-models/daemon.json` | Status file (PID, port, token) — written by the background service |
+| `~/.free-coding-models/daemon-stdout.log` | Service output log |
+
+The `proxy.activeTool` field in the config file tracks which tool the proxy auto-syncs to (e.g. `"opencode"`, `"aider"`, `"claude-code"`).
 
 ### Cleanup
 
-- From the Proxy & Daemon overlay: **Clean OpenCode proxy config** (removes `fcm-proxy` from `opencode.json`)
+- From the FCM Proxy V2 overlay: **Clean {tool} proxy config** — removes `fcm-proxy` entries from whichever tool is currently selected
 - Or: `free-coding-models --clean-proxy`
 
 ### Safety
 
 - **Dev guard**: `installDaemon()` is blocked when running from a git checkout — prevents hardcoding local repo paths in OS service files
 - **Localhost only**: The proxy listens on `127.0.0.1`, never exposed to the network
-- **Consent required**: Daemon installation requires explicit user action — never auto-installs
-- **Hot-reload**: Config changes are picked up automatically without restarting the daemon
+- **Consent required**: Service installation requires explicit user action — never auto-installs
+- **Hot-reload**: Config changes are picked up automatically without restarting the service
 
 ---
 
@@ -661,11 +666,11 @@ You can use `free-coding-models` with 12+ AI coding tools. When you select a mod
 | OpenCode Desktop | `--opencode-desktop` | Opens Desktop app |
 | OpenClaw | `--openclaw` | ~/.openclaw/openclaw.json |
 | Crush | `--crush` | ~/.config/crush/crush.json |
-| Goose | `--goose` | Environment variables |
+| Goose | `--goose` | ~/.config/goose/config.yaml + custom_providers/ |
 | **Aider** | `--aider` | ~/.aider.conf.yml |
-| **Claude Code** | `--claude-code` | CLI flag |
-| **Codex** | `--codex` | CLI flag |
-| **Gemini** | `--gemini` | ~/.gemini/settings.json |
+| **Claude Code** ⚡ | `--claude-code` | Requires FCM Proxy V2 |
+| **Codex** ⚡ | `--codex` | Requires FCM Proxy V2 |
+| **Gemini** ⚡ | `--gemini` | Requires FCM Proxy V2 |
 | **Qwen** | `--qwen` | ~/.qwen/settings.json |
 | **OpenHands** | `--openhands` | LLM_MODEL env var |
 | **Amp** | `--amp` | ~/.config/amp/settings.json |
@@ -673,7 +678,9 @@ You can use `free-coding-models` with 12+ AI coding tools. When you select a mod
 
 Press **Z** to cycle through all 13 tool modes in the TUI, or use flags to start in your preferred mode.
 
-All tools are also available as install targets in the **Install Endpoints** flow (`Y` key) — install an entire provider catalog into any tool with one flow, choosing between Direct Provider or FCM Proxy connection.
+⚡ = Requires FCM Proxy V2 background service (press `J` to enable). These tools cannot connect to free providers without the proxy.
+
+All tools are also available as install targets in the **Install Endpoints** flow (`Y` key) — install an entire provider catalog into any tool with one flow, choosing between Direct Provider or FCM Proxy V2 connection.
 
 ---
 
@@ -972,7 +979,7 @@ This script:
 | `--tier C` | Show only C tier models |
 | `--profile <name>` | Load a saved config profile on startup |
 | `--recommend` | Auto-open Smart Recommend overlay on start |
-| `--clean-proxy` | Remove persisted `fcm-proxy` config from OpenCode |
+| `--clean-proxy` | Remove persisted `fcm-proxy` config from the active tool |
 
 **Keyboard shortcuts (main TUI):**
 - **↑↓** — Navigate models
@@ -986,13 +993,14 @@ This script:
 - **X** — Toggle request logs (recent proxied request/token usage logs, up to 500 entries)
 - **A (in logs)** — Toggle between showing 500 entries or ALL logs
 - **P** — Open Settings (manage API keys, toggles, updates, profiles)
-- **Y** — Open Install Endpoints (`provider → tool → connection mode → scope → models`, Direct or FCM Proxy)
+- **Y** — Open Install Endpoints (`provider → tool → connection mode → scope → models`, Direct or FCM Proxy V2)
 - **Shift+P** — Cycle through saved profiles (switches live TUI settings)
 - **Shift+S** — Save current TUI settings as a named profile (inline prompt)
 - **Q** — Open Smart Recommend overlay (find the best model for your task)
 - **N** — Open Changelog overlay (browse index of all versions, `Enter` to view details, `B` to go back)
 - **W** — Cycle ping mode (`FAST` 2s → `NORMAL` 10s → `SLOW` 30s → `FORCED` 4s)
-- **J / I** — Request feature / Report bug
+- **J** — Open FCM Proxy V2 settings (shows green "Proxy On" / red "Proxy Off" badge in footer)
+- **I** — Feedback, bugs & requests
 - **K / Esc** — Show help overlay / Close overlay
 - **Ctrl+C** — Exit
 
@@ -1008,7 +1016,7 @@ Pressing **K** now shows a full in-app reference: main hotkeys, settings hotkeys
    - Env-file based: `Claude Code`, `Codex CLI`, `OpenHands` (writes `~/.fcm-{tool}-env` — source it before launching)
 3. **Connection Mode** — Choose how the tool connects to the provider:
    - **⚡ Direct Provider** — pure API connection, no proxy involved
-   - **🔄 FCM Proxy** — route through the local FCM proxy with key rotation and usage tracking
+   - **🔄 FCM Proxy V2** — route through FCM Proxy V2 with key rotation and usage tracking
 4. **Scope** — Choose `Install all models` or `Install selected models only`
 5. **Models** (if scope = selected) — Multi-select individual models from the provider catalog
 

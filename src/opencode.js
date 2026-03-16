@@ -690,7 +690,7 @@ async function startOpenCodeWithProxy(model, port, proxyModelId, proxyModels, fc
 
   config.provider['fcm-proxy'] = {
     npm: '@ai-sdk/openai-compatible',
-    name: 'FCM Proxy',
+    name: 'FCM Proxy V2',
     options: {
       baseURL: `http://127.0.0.1:${port}/v1`,
       apiKey: proxyToken

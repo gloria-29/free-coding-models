@@ -60,7 +60,7 @@ const INSTALL_TARGET_MODES = ['opencode', 'opencode-desktop', 'openclaw', 'crush
 // 📖 Connection modes: direct (pure provider) vs FCM proxy (rotates keys)
 export const CONNECTION_MODES = [
   { key: 'direct', label: 'Direct Provider', hint: 'Connect the tool straight to the provider API — no proxy involved.' },
-  { key: 'proxy', label: 'FCM Proxy', hint: 'Route through the local FCM proxy with key rotation and usage tracking.' },
+  { key: 'proxy', label: 'FCM Proxy V2', hint: 'Route through FCM Proxy V2 with key rotation and usage tracking.' },
 ]
 
 function getDefaultPaths() {
@@ -514,7 +514,7 @@ function installIntoEnvBasedTool(providerKey, models, apiKey, toolMode, paths, c
   const envLines = [
     '# 📖 Managed by free-coding-models — source this file before launching the tool',
     `# 📖 Provider: ${getProviderLabel(providerKey)} (${models.length} models)`,
-    `# 📖 Connection: ${connectionMode === 'proxy' ? 'FCM Proxy (background daemon)' : 'Direct provider'}`,
+    `# 📖 Connection: ${connectionMode === 'proxy' ? 'FCM Proxy V2 (background service)' : 'Direct provider'}`,
     `export OPENAI_API_KEY="${effectiveApiKey}"`,
     `export OPENAI_BASE_URL="${effectiveBaseUrl}"`,
     `export OPENAI_MODEL="${effectiveModelId}"`,

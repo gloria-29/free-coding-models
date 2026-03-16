@@ -39,11 +39,16 @@ export function buildProxyTopologyFromConfig(fcmConfig, mergedModels, sourcesMap
     proxyModels[merged.slug] = { name: merged.label }
 
     for (const providerEntry of merged.providers) {
+      // 📖 Trim whitespace from API keys — common copy-paste error that causes silent auth failures
       const keys = resolveApiKeys(fcmConfig, providerEntry.providerKey)
+        .map(k => typeof k === 'string' ? k.trim() : k)
+        .filter(Boolean)
       const providerSource = sourcesMap[providerEntry.providerKey]
       if (!providerSource) continue
 
-      const rawUrl = resolveCloudflareUrl(providerSource.url)
+      const rawUrl = resolveCloudflareUrl(providerSource.url || '')
+      // 📖 Skip provider if URL resolution fails (e.g. undefined or empty URL)
+      if (!rawUrl) continue
       const baseUrl = rawUrl.replace(/\/chat\/completions$/, '')
 
       keys.forEach((apiKey, keyIdx) => {

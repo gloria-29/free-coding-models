@@ -39,6 +39,12 @@ const UNKNOWN_COOLDOWN_BASE_MS = 15 * 60 * 1000 // 15m initial cooldown
 const UNKNOWN_COOLDOWN_MAX_MS = 6 * 60 * 60 * 1000 // 6h max cooldown
 const KNOWN_FALLBACK_COOLDOWN_MS = 5 * 60 * 1000 // 5m fallback for known providers
 
+// 📖 Generic consecutive-failure cooldown constants.
+// When an account accumulates FAILURE_COOLDOWN_THRESHOLD consecutive non-429 failures,
+// it enters a graduated cooldown (30s → 60s → 120s) so the proxy routes around it.
+const FAILURE_COOLDOWN_THRESHOLD = 3
+const FAILURE_COOLDOWN_STEPS_MS = [30_000, 60_000, 120_000]
+
 // ─── Internal: per-account health state ──────────────────────────────────────
 
 class AccountHealth {
@@ -85,6 +91,15 @@ class AccountHealth {
       cooldownUntilMs: 0,
       probeInFlight: false,
     }
+
+    /**
+     * 📖 Generic consecutive-failure tracking for non-429 errors.
+     * When consecutiveFailures >= FAILURE_COOLDOWN_THRESHOLD, the account enters
+     * a graduated cooldown to avoid wasting requests on a failing endpoint.
+     */
+    this.consecutiveFailures = 0
+    this.failureCooldownUntilMs = 0
+    this.failureCooldownLevel = 0
   }
 
   /**
@@ -264,6 +279,9 @@ export class AccountManager {
     // Known-telemetry retry-after cooldown (set via _retryAfterMap)
     const retryAfterTs = this._retryAfterMap.get(acct.id)
     if (retryAfterTs && Date.now() < retryAfterTs) return false
+
+    // 📖 Generic failure cooldown — blocks account after consecutive non-429 failures
+    if (health.failureCooldownUntilMs > 0 && Date.now() < health.failureCooldownUntilMs) return false
 
     // Only exclude when quota is known to be nearly exhausted.
     // When quotaSignal is 'unknown' (null quotaPercent), we remain available.
@@ -455,6 +473,17 @@ export class AccountManager {
     if (classifiedError?.retryAfterSec) {
       this._retryAfterMap.set(accountId, Date.now() + classifiedError.retryAfterSec * 1000)
     }
+
+    // 📖 Generic consecutive-failure cooldown: when an account hits FAILURE_COOLDOWN_THRESHOLD
+    // consecutive non-429 failures, put it in graduated cooldown (30s → 60s → 120s)
+    // so the proxy routes around it instead of wasting requests.
+    health.consecutiveFailures++
+    if (health.consecutiveFailures >= FAILURE_COOLDOWN_THRESHOLD) {
+      const stepIdx = Math.min(health.failureCooldownLevel, FAILURE_COOLDOWN_STEPS_MS.length - 1)
+      health.failureCooldownUntilMs = Date.now() + FAILURE_COOLDOWN_STEPS_MS[stepIdx]
+      health.failureCooldownLevel++
+      health.consecutiveFailures = 0
+    }
   }
 
   /**
@@ -532,6 +561,11 @@ export class AccountManager {
 
     // Clear retry-after from the retryAfterMap (no longer cooling down)
     this._retryAfterMap.delete(accountId)
+
+    // 📖 Reset generic failure cooldown state on success
+    health.consecutiveFailures = 0
+    health.failureCooldownUntilMs = 0
+    health.failureCooldownLevel = 0
   }
 
   /**

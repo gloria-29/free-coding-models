@@ -31,9 +31,19 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
-import { execSync, execFileSync } from 'node:child_process'
+import { execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import http from 'node:http'
+
+/**
+ * 📖 Safe wrapper around execSync with a timeout to prevent indefinite hangs.
+ * @param {string} cmd
+ * @param {number} [timeoutMs=15000]
+ * @returns {Buffer}
+ */
+function execSyncSafe(cmd, timeoutMs = 15000) {
+  return execSync(cmd, { stdio: 'pipe', timeout: timeoutMs })
+}
 
 // 📖 Paths
 const DATA_DIR = join(homedir(), '.free-coding-models')
@@ -131,11 +141,22 @@ function isPidAlive(pid) {
  * @param {number} [timeoutMs=3000]
  * @returns {Promise<{ ok: boolean, data?: object }>}
  */
+// 📖 Max buffer for health check responses (64 KB) — prevents memory issues from rogue endpoints
+const MAX_HEALTH_BUFFER = 64 * 1024
+
 function healthCheck(port, timeoutMs = 3000) {
   return new Promise(resolve => {
     const req = http.get(`http://127.0.0.1:${port}/v1/health`, { timeout: timeoutMs }, res => {
       const chunks = []
-      res.on('data', c => chunks.push(c))
+      let totalSize = 0
+      res.on('data', c => {
+        totalSize += c.length
+        if (totalSize > MAX_HEALTH_BUFFER) {
+          res.destroy()
+          return resolve({ ok: false })
+        }
+        chunks.push(c)
+      })
       res.on('end', () => {
         try {
           const data = JSON.parse(Buffer.concat(chunks).toString())
@@ -242,7 +263,7 @@ function installMacOS(nodePath, daemonScript) {
 
   // 📖 Unload existing agent if any (ignore errors)
   try {
-    execSync(`launchctl unload "${PLIST_PATH}" 2>/dev/null`, { stdio: 'pipe' })
+    execSyncSafe(`launchctl unload "${PLIST_PATH}" 2>/dev/null`)
   } catch { /* ignore */ }
 
   const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
@@ -275,8 +296,12 @@ function installMacOS(nodePath, daemonScript) {
 </plist>
 `
 
-  writeFileSync(PLIST_PATH, plistContent)
-  execSync(`launchctl load "${PLIST_PATH}"`, { stdio: 'pipe' })
+  try {
+    writeFileSync(PLIST_PATH, plistContent)
+  } catch (err) {
+    throw new Error('Failed to write LaunchAgent plist: ' + err.message)
+  }
+  execSyncSafe(`launchctl load "${PLIST_PATH}"`)
 
   return { success: true }
 }
@@ -290,7 +315,7 @@ function installLinux(nodePath, daemonScript) {
   }
 
   const serviceContent = `[Unit]
-Description=FCM Proxy Daemon — Always-on model rotation proxy
+Description=FCM Proxy V2 — Always-on model rotation proxy
 After=network.target
 
 [Service]
@@ -307,14 +332,18 @@ StandardError=append:${DAEMON_STDERR_LOG}
 WantedBy=default.target
 `
 
-  writeFileSync(SERVICE_PATH, serviceContent)
-  execSync('systemctl --user daemon-reload', { stdio: 'pipe' })
-  execSync(`systemctl --user enable ${SERVICE_NAME}`, { stdio: 'pipe' })
-  execSync(`systemctl --user start ${SERVICE_NAME}`, { stdio: 'pipe' })
+  try {
+    writeFileSync(SERVICE_PATH, serviceContent)
+  } catch (err) {
+    throw new Error('Failed to write systemd service file: ' + err.message)
+  }
+  execSyncSafe('systemctl --user daemon-reload')
+  execSyncSafe(`systemctl --user enable ${SERVICE_NAME}`)
+  execSyncSafe(`systemctl --user start ${SERVICE_NAME}`)
 
   // 📖 Enable lingering so service survives logout
   try {
-    execSync(`loginctl enable-linger ${process.env.USER || ''}`, { stdio: 'pipe' })
+    execSyncSafe(`loginctl enable-linger ${process.env.USER || ''}`)
   } catch { /* non-fatal — might need sudo */ }
 
   return { success: true }
@@ -345,7 +374,7 @@ export function uninstallDaemon() {
 
 function uninstallMacOS() {
   try {
-    execSync(`launchctl unload "${PLIST_PATH}" 2>/dev/null`, { stdio: 'pipe' })
+    execSyncSafe(`launchctl unload "${PLIST_PATH}" 2>/dev/null`)
   } catch { /* ignore */ }
 
   try {
@@ -362,13 +391,13 @@ function uninstallMacOS() {
 
 function uninstallLinux() {
   try {
-    execSync(`systemctl --user stop ${SERVICE_NAME} 2>/dev/null`, { stdio: 'pipe' })
-    execSync(`systemctl --user disable ${SERVICE_NAME} 2>/dev/null`, { stdio: 'pipe' })
+    execSyncSafe(`systemctl --user stop ${SERVICE_NAME} 2>/dev/null`)
+    execSyncSafe(`systemctl --user disable ${SERVICE_NAME} 2>/dev/null`)
   } catch { /* ignore */ }
 
   try {
     if (existsSync(SERVICE_PATH)) unlinkSync(SERVICE_PATH)
-    execSync('systemctl --user daemon-reload', { stdio: 'pipe' })
+    execSyncSafe('systemctl --user daemon-reload')
   } catch { /* ignore */ }
 
   try {
@@ -393,10 +422,10 @@ export function restartDaemon() {
   try {
     if (platform.platform === 'macos') {
       // 📖 launchd: unload + load to restart
-      try { execSync(`launchctl unload "${PLIST_PATH}" 2>/dev/null`, { stdio: 'pipe' }) } catch { /* ignore */ }
-      execSync(`launchctl load "${PLIST_PATH}"`, { stdio: 'pipe' })
+      try { execSyncSafe(`launchctl unload "${PLIST_PATH}" 2>/dev/null`) } catch { /* ignore */ }
+      execSyncSafe(`launchctl load "${PLIST_PATH}"`)
     } else {
-      execSync(`systemctl --user restart ${SERVICE_NAME}`, { stdio: 'pipe' })
+      execSyncSafe(`systemctl --user restart ${SERVICE_NAME}`)
     }
     return { success: true }
   } catch (err) {

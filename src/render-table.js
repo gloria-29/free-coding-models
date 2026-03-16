@@ -13,7 +13,7 @@
  *   - Emoji-aware padding via padEndDisplay for aligned verdict/status cells
  *   - Viewport clipping with above/below indicators
  *   - Smart badges (mode, tier filter, origin filter, profile)
- *   - Proxy status line integrated in footer
+ *   - Footer J badge: green "Proxy On" / red "Proxy Off" indicator with direct overlay access
  *   - Install-endpoints shortcut surfaced directly in the footer hints
  *   - Distinct auth-failure vs missing-key health labels so configured providers stay honest
  *
@@ -40,7 +40,7 @@ import { TIER_COLOR } from './tier-colors.js'
 import { getAvg, getVerdict, getUptime, getStabilityScore, getVersionStatusInfo } from './utils.js'
 import { usagePlaceholderForProvider } from './ping.js'
 import { formatTokenTotalCompact } from './token-usage-reader.js'
-import { calculateViewport, sortResultsWithPinnedFavorites, renderProxyStatusLine, padEndDisplay } from './render-helpers.js'
+import { calculateViewport, sortResultsWithPinnedFavorites, padEndDisplay } from './render-helpers.js'
 import { getToolMeta } from './tool-metadata.js'
 
 const ACTIVE_FILTER_BG_BY_TIER = {
@@ -92,7 +92,7 @@ export function setActiveProxy(proxyInstance) {
 }
 
 // ─── renderTable: mode param controls footer hint text (opencode vs openclaw) ─────────
-export function renderTable(results, pendingPings, frame, cursor = null, sortColumn = 'avg', sortDirection = 'asc', pingInterval = PING_INTERVAL, lastPingTime = Date.now(), mode = 'opencode', tierFilterMode = 0, scrollOffset = 0, terminalRows = 0, terminalCols = 0, originFilterMode = 0, activeProfile = null, profileSaveMode = false, profileSaveBuffer = '', proxyStartupStatus = null, pingMode = 'normal', pingModeSource = 'auto', hideUnconfiguredModels = false, widthWarningStartedAt = null, widthWarningDismissed = false, settingsUpdateState = 'idle', settingsUpdateLatestVersion = null, proxyEnabled = false, isOutdated = false, latestVersion = null) {
+export function renderTable(results, pendingPings, frame, cursor = null, sortColumn = 'avg', sortDirection = 'asc', pingInterval = PING_INTERVAL, lastPingTime = Date.now(), mode = 'opencode', tierFilterMode = 0, scrollOffset = 0, terminalRows = 0, terminalCols = 0, originFilterMode = 0, activeProfile = null, profileSaveMode = false, profileSaveBuffer = '', proxyStartupStatus = null, pingMode = 'normal', pingModeSource = 'auto', hideUnconfiguredModels = false, widthWarningStartedAt = null, widthWarningDismissed = false, widthWarningShowCount = 0, settingsUpdateState = 'idle', settingsUpdateLatestVersion = null, proxyEnabled = false, isOutdated = false, latestVersion = null) {
   // 📖 Filter out hidden models for display
   const visibleResults = results.filter(r => !r.hidden)
 
@@ -193,23 +193,25 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   const W_TOKENS = 7
   const W_USAGE = 7
   const MIN_TABLE_WIDTH = 166
-  const warningDurationMs = 5_000
+  const warningDurationMs = 4_000
   const elapsed = widthWarningStartedAt ? Math.max(0, Date.now() - widthWarningStartedAt) : warningDurationMs
   const remainingMs = Math.max(0, warningDurationMs - elapsed)
-  const showWidthWarning = terminalCols > 0 && terminalCols < MIN_TABLE_WIDTH && !widthWarningDismissed && remainingMs > 0
+  const showWidthWarning = terminalCols > 0 && terminalCols < MIN_TABLE_WIDTH && !widthWarningDismissed && widthWarningShowCount < 2 && remainingMs > 0
 
   if (showWidthWarning) {
     const lines = []
-    const blankLines = Math.max(0, Math.floor(((terminalRows || 24) - 5) / 2))
-    const warning = 'Please maximize your terminal for optimal use.'
-    const warning2 = 'The current terminal is too small.'
-    const warning3 = 'Reduce font size or maximize width of terminal.'
+    const blankLines = Math.max(0, Math.floor(((terminalRows || 24) - 7) / 2))
+    const warning = '🖥️  Please maximize your terminal for optimal use.'
+    const warning2 = '⚠️  The current terminal is too small.'
+    const warning3 = '📏  Reduce font size or maximize width of terminal.'
     const padLeft = Math.max(0, Math.floor((terminalCols - warning.length) / 2))
     const padLeft2 = Math.max(0, Math.floor((terminalCols - warning2.length) / 2))
     const padLeft3 = Math.max(0, Math.floor((terminalCols - warning3.length) / 2))
     for (let i = 0; i < blankLines; i++) lines.push('')
     lines.push(' '.repeat(padLeft) + chalk.red.bold(warning))
+    lines.push('')
     lines.push(' '.repeat(padLeft2) + chalk.red(warning2))
+    lines.push('')
     lines.push(' '.repeat(padLeft3) + chalk.red(warning3))
     lines.push('')
     lines.push(' '.repeat(Math.max(0, Math.floor((terminalCols - 34) / 2))) + chalk.yellow(`this message will hide in ${(remainingMs / 1000).toFixed(1)}s`))
@@ -620,7 +622,8 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   const activeHotkey = (keyLabel, text, bg = [57, 255, 20], fg = [0, 0, 0]) => chalk.bgRgb(...bg).rgb(...fg)(` ${keyLabel}${text} `)
   // 📖 Line 1: core navigation + filtering shortcuts
   lines.push(
-    chalk.dim(`  ↑↓ Navigate  •  `) +
+    (proxyEnabled ? activeHotkey('J', ' 📡 FCM Proxy V2 On') : activeHotkey('J', ' 📡 FCM Proxy V2 Off', [180, 30, 30], [255, 255, 255])) +
+    chalk.dim(`  •  `) +
     hotkey('F', ' Toggle Favorite') +
     chalk.dim(`  •  `) +
     (tierFilterMode > 0
@@ -631,7 +634,7 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
       ? activeHotkey('D', ` Provider (${activeOriginLabel})`, [0, 0, 0], PROVIDER_COLOR[[null, ...Object.keys(sources)][originFilterMode]] || [255, 255, 255])
       : hotkey('D', ' Provider')) +
     chalk.dim(`  •  `) +
-    (hideUnconfiguredModels ? activeHotkey('E', ' Configured Only') : hotkey('E', ' Configured Only')) +
+    (hideUnconfiguredModels ? activeHotkey('E', ' Configured Models Only') : hotkey('E', ' Configured Models Only')) +
     chalk.dim(`  •  `) +
     hotkey('X', ' Token Logs') +
     chalk.dim(`  •  `) +
@@ -639,10 +642,16 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     chalk.dim(`  •  `) +
     hotkey('K', ' Help')
   )
-  // 📖 Line 2: profiles, install flow, recommend, feature request, bug report, and extended hints.
-  lines.push(chalk.dim(`  `) + hotkey('⇧P', ' Cycle profile') + chalk.dim(`  •  `) + hotkey('⇧S', ' Save profile') + chalk.dim(`  •  `) + hotkey('Y', ' Install endpoints') + chalk.dim(`  •  `) + hotkey('Q', ' Smart Recommend') + chalk.dim(`  •  `) + hotkey('J', ' Request feature') + chalk.dim(`  •  `) + hotkey('I', ' Report bug'))
-  // 📖 Proxy status line — always rendered with explicit state (starting/running/failed/stopped)
-  lines.push(renderProxyStatusLine(proxyStartupStatus, activeProxyRef, proxyEnabled))
+  // 📖 Line 2: profiles, install flow, recommend, proxy shortcut, feedback, and extended hints.
+  lines.push(
+    chalk.dim(`  `) +
+    hotkey('⇧P', ' Cycle profile') + chalk.dim(`  •  `) +
+    hotkey('⇧S', ' Save profile') + chalk.dim(`  •  `) +
+    hotkey('Y', ' Install endpoints') + chalk.dim(`  •  `) +
+    hotkey('Q', ' Smart Recommend') + chalk.dim(`  •  `) +
+    hotkey('I', ' Feedback, bugs & requests')
+  )
+  // 📖 Proxy status is now shown via the J badge in line 2 above — no need for a dedicated line
   if (versionStatus.isOutdated) {
     const outdatedBadge = chalk.bgRed.bold.yellow(' This version is outdated . ')
     const latestLabel = chalk.redBright(` local v${LOCAL_VERSION} · latest v${versionStatus.latestVersion}`)

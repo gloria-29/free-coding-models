@@ -98,6 +98,7 @@ import { loadConfig, saveConfig, getApiKey, getProxySettings, resolveApiKeys, ad
 import { buildMergedModels } from '../src/model-merger.js'
 import { ProxyServer } from '../src/proxy-server.js'
 import { loadOpenCodeConfig, saveOpenCodeConfig, syncToOpenCode, restoreOpenCodeBackup, cleanupOpenCodeProxyConfig } from '../src/opencode-sync.js'
+import { syncProxyToTool, cleanupToolConfig, PROXY_SYNCABLE_TOOLS } from '../src/proxy-sync.js'
 import { usageForRow as _usageForRow } from '../src/usage-reader.js'
 import { loadRecentLogs } from '../src/log-reader.js'
 import { buildProviderModelTokenKey, loadTokenUsageByProviderModel } from '../src/token-usage-reader.js'
@@ -108,7 +109,7 @@ import { TIER_COLOR } from '../src/tier-colors.js'
 import { resolveCloudflareUrl, buildPingRequest, ping, extractQuotaPercent, getProviderQuotaPercentCached, usagePlaceholderForProvider } from '../src/ping.js'
 import { runFiableMode, filterByTierOrExit, fetchOpenRouterFreeModels } from '../src/analysis.js'
 import { PROVIDER_METADATA, ENV_VAR_NAMES, isWindows, isMac } from '../src/provider-metadata.js'
-import { parseTelemetryEnv, isTelemetryDebugEnabled, telemetryDebug, ensureTelemetryConfig, getTelemetryDistinctId, getTelemetrySystem, getTelemetryTerminal, isTelemetryEnabled, sendUsageTelemetry, sendFeatureRequest, sendBugReport } from '../src/telemetry.js'
+import { parseTelemetryEnv, isTelemetryDebugEnabled, telemetryDebug, ensureTelemetryConfig, getTelemetryDistinctId, getTelemetrySystem, getTelemetryTerminal, isTelemetryEnabled, sendUsageTelemetry, sendBugReport } from '../src/telemetry.js'
 import { ensureFavoritesConfig, toFavoriteKey, syncFavoriteFlags, toggleFavoriteModel } from '../src/favorites.js'
 import { checkForUpdateDetailed, checkForUpdate, runUpdate, promptUpdateNotification } from '../src/updater.js'
 import { promptApiKey } from '../src/setup.js'
@@ -140,7 +141,7 @@ const readline = require('readline')
 const pkg = require('../package.json')
 const LOCAL_VERSION = pkg.version
 
-// 📖 sendFeatureRequest, sendBugReport → imported from ../src/telemetry.js
+// 📖 sendBugReport → imported from ../src/telemetry.js
 
 // 📖 parseTelemetryEnv, isTelemetryDebugEnabled, telemetryDebug, ensureTelemetryConfig → imported from ../src/telemetry.js
 
@@ -207,17 +208,17 @@ async function main() {
       const s = await dm.getDaemonStatus()
       console.log()
       if (s.status === 'running') {
-        console.log(chalk.greenBright(`  📡 FCM Daemon: Running`))
+        console.log(chalk.greenBright(`  📡 FCM Proxy V2: Running`))
         console.log(chalk.dim(`  PID: ${s.info.pid}  •  Port: ${s.info.port}  •  Accounts: ${s.info.accountCount}  •  Version: ${s.info.version}`))
         console.log(chalk.dim(`  Started: ${s.info.startedAt}`))
       } else if (s.status === 'stopped') {
-        console.log(chalk.yellow(`  📡 FCM Daemon: Stopped (service installed but not running)`))
+        console.log(chalk.yellow(`  📡 FCM Proxy V2: Stopped (service installed but not running)`))
       } else if (s.status === 'stale') {
-        console.log(chalk.red(`  📡 FCM Daemon: Stale (crashed — PID ${s.info?.pid} no longer alive)`))
+        console.log(chalk.red(`  📡 FCM Proxy V2: Stale (crashed — PID ${s.info?.pid} no longer alive)`))
       } else if (s.status === 'unhealthy') {
-        console.log(chalk.red(`  📡 FCM Daemon: Unhealthy (PID alive but health check failed)`))
+        console.log(chalk.red(`  📡 FCM Proxy V2: Unhealthy (PID alive but health check failed)`))
       } else {
-        console.log(chalk.dim(`  📡 FCM Daemon: Not installed`))
+        console.log(chalk.dim(`  📡 FCM Proxy V2: Not installed`))
         console.log(chalk.dim(`  Install via: free-coding-models daemon install`))
       }
       console.log()
@@ -227,7 +228,7 @@ async function main() {
       const result = dm.installDaemon()
       console.log()
       if (result.success) {
-        console.log(chalk.greenBright('  ✅ Background daemon installed and started!'))
+        console.log(chalk.greenBright('  ✅ FCM Proxy V2 background service installed and started!'))
         console.log(chalk.dim('  The proxy will now run automatically at login.'))
       } else {
         console.log(chalk.red(`  ❌ Install failed: ${result.error}`))
@@ -239,7 +240,7 @@ async function main() {
       const result = dm.uninstallDaemon()
       console.log()
       if (result.success) {
-        console.log(chalk.greenBright('  ✅ Background daemon uninstalled.'))
+        console.log(chalk.greenBright('  ✅ FCM Proxy V2 background service uninstalled.'))
       } else {
         console.log(chalk.red(`  ❌ Uninstall failed: ${result.error}`))
       }
@@ -250,7 +251,7 @@ async function main() {
       const result = dm.restartDaemon()
       console.log()
       if (result.success) {
-        console.log(chalk.greenBright('  ✅ Daemon restarted.'))
+        console.log(chalk.greenBright('  ✅ FCM Proxy V2 service restarted.'))
       } else {
         console.log(chalk.red(`  ❌ Restart failed: ${result.error}`))
       }
@@ -268,7 +269,7 @@ async function main() {
       }
       process.exit(0)
     }
-    console.log(chalk.red(`  Unknown daemon command: ${daemonSubcmd}`))
+    console.log(chalk.red(`  Unknown command: ${daemonSubcmd}`))
     console.log(chalk.dim('  Usage: free-coding-models daemon [status|install|uninstall|restart|logs]'))
     process.exit(1)
   }
@@ -456,6 +457,7 @@ async function main() {
     terminalCols: process.stdout.columns || 80, // 📖 Current terminal width
     widthWarningStartedAt: (process.stdout.columns || 80) < 166 ? now : null, // 📖 Start the narrow-terminal countdown immediately when booting in a small viewport.
     widthWarningDismissed: false, // 📖 Esc hides the narrow-terminal warning early for the current narrow-width session.
+    widthWarningShowCount: 0, // 📖 Counter for how many times the narrow-terminal warning has been shown (max 2 per session).
     // 📖 Settings screen state (P key opens it)
     settingsOpen: false,          // 📖 Whether settings overlay is active
     settingsCursor: 0,            // 📖 Which provider row is selected in settings
@@ -510,14 +512,9 @@ async function main() {
     activeProfile: getActiveProfileName(config), // 📖 Currently loaded profile name (or null)
     profileSaveMode: false,       // 📖 Whether the inline "Save profile" name input is active
     profileSaveBuffer: '',        // 📖 Typed characters for the profile name being saved
-    // 📖 Feature Request state (J key opens it)
-    featureRequestOpen: false,    // 📖 Whether the feature request overlay is active
-    featureRequestBuffer: '',     // 📖 Typed characters for the feature request message
-    featureRequestStatus: 'idle', // 📖 'idle'|'sending'|'success'|'error' — webhook send status
-    featureRequestError: null,    // 📖 Last webhook error message
-    // 📖 Bug Report state (I key opens it)
-    bugReportOpen: false,         // 📖 Whether the bug report overlay is active
-    bugReportBuffer: '',          // 📖 Typed characters for the bug report message
+    // 📖 Feedback state (J/I keys open it)
+    feedbackOpen: false,          // 📖 Whether the feedback overlay is active
+    bugReportBuffer: '',          // 📖 Typed characters for the feedback message
     bugReportStatus: 'idle',      // 📖 'idle'|'sending'|'success'|'error' — webhook send status
     bugReportError: null,         // 📖 Last webhook error message
     // 📖 OpenCode sync status (S key in settings)
@@ -549,6 +546,7 @@ async function main() {
       if (prevCols >= 166 || state.widthWarningDismissed) {
         state.widthWarningStartedAt = Date.now()
         state.widthWarningDismissed = false
+        state.widthWarningShowCount++ // 📖 Increment counter when showing the warning again
       } else if (!state.widthWarningStartedAt) {
         state.widthWarningStartedAt = Date.now()
       }
@@ -807,7 +805,7 @@ async function main() {
     ENV_VAR_NAMES,
     ensureProxyRunning,
     syncToOpenCode,
-    cleanupOpenCodeProxyConfig,
+    cleanupToolConfig,
     restoreOpenCodeBackup,
     checkForUpdateDetailed,
     runUpdate,
@@ -821,7 +819,6 @@ async function main() {
     getToolModeOrder,
     startRecommendAnalysis: overlays.startRecommendAnalysis,
     stopRecommendAnalysis: overlays.stopRecommendAnalysis,
-    sendFeatureRequest,
     sendBugReport,
     stopUi,
     ping,
@@ -869,7 +866,7 @@ async function main() {
     refreshAutoPingMode()
     state.frame++
     // 📖 Cache visible+sorted models each frame so Enter handler always matches the display
-    if (!state.settingsOpen && !state.installEndpointsOpen && !state.recommendOpen && !state.featureRequestOpen && !state.bugReportOpen && !state.changelogOpen && !state.proxyDaemonOpen) {
+    if (!state.settingsOpen && !state.installEndpointsOpen && !state.recommendOpen && !state.feedbackOpen && !state.changelogOpen && !state.proxyDaemonOpen) {
       const visible = state.results.filter(r => !r.hidden)
       state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
     }
@@ -881,17 +878,15 @@ async function main() {
         ? overlays.renderInstallEndpoints()
       : state.recommendOpen
         ? overlays.renderRecommend()
-        : state.featureRequestOpen
-          ? overlays.renderFeatureRequest()
-          : state.bugReportOpen
-            ? overlays.renderBugReport()
-              : state.helpVisible
+        : state.feedbackOpen
+          ? overlays.renderFeedback()
+            : state.helpVisible
                 ? overlays.renderHelp()
               : state.logVisible
                 ? overlays.renderLog()
               : state.changelogOpen
                 ? overlays.renderChangelog()
-                : renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer, state.proxyStartupStatus, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.settingsUpdateState, state.settingsUpdateLatestVersion, getProxySettings(state.config).enabled === true, state.isOutdated, state.latestVersion)
+                : renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer, state.proxyStartupStatus, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, getProxySettings(state.config).enabled === true, state.isOutdated, state.latestVersion)
     process.stdout.write(ALT_HOME + content)
   }, Math.round(1000 / FPS))
 
@@ -899,7 +894,7 @@ async function main() {
   const initialVisible = state.results.filter(r => !r.hidden)
   state.visibleSorted = sortResultsWithPinnedFavorites(initialVisible, state.sortColumn, state.sortDirection)
 
-  process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer, state.proxyStartupStatus, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.settingsUpdateState, state.settingsUpdateLatestVersion, getProxySettings(state.config).enabled === true, state.isOutdated, state.latestVersion))
+  process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer, state.proxyStartupStatus, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, getProxySettings(state.config).enabled === true, state.isOutdated, state.latestVersion))
 
   // 📖 If --recommend was passed, auto-open the Smart Recommend overlay on start
   if (cliArgs.recommendMode) {

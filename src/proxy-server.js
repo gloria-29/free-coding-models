@@ -56,16 +56,31 @@ function stripRateLimitHeaders(headers) {
   return result
 }
 
+// 📖 Max body size limit to prevent memory exhaustion attacks (10 MB)
+const MAX_BODY_SIZE = 10 * 1024 * 1024
+
 /**
  * Buffer all chunks from an http.IncomingMessage and return the body as a string.
+ * Enforces a size limit to prevent memory exhaustion from oversized payloads.
  *
  * @param {http.IncomingMessage} req
  * @returns {Promise<string>}
+ * @throws {Error} with statusCode 413 if body exceeds MAX_BODY_SIZE
  */
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = []
-    req.on('data', chunk => chunks.push(chunk))
+    let totalSize = 0
+    req.on('data', chunk => {
+      totalSize += chunk.length
+      if (totalSize > MAX_BODY_SIZE) {
+        req.destroy()
+        const err = new Error('Request body too large')
+        err.statusCode = 413
+        return reject(err)
+      }
+      chunks.push(chunk)
+    })
     req.on('end', () => resolve(Buffer.concat(chunks).toString()))
     req.on('error', reject)
   })
@@ -119,8 +134,13 @@ export class ProxyServer {
     this._proxyApiKey = proxyApiKey
     this._accounts = accounts
     this._upstreamTimeoutMs = upstreamTimeoutMs
+    // 📖 Progressive backoff delays (ms) for retries — first attempt is immediate,
+    // subsequent ones add increasing delay + random jitter (0-100ms) to avoid
+    // re-hitting the same rate-limit window on 429s from providers
+    this._retryDelays = [0, 300, 800]
     this._accountManager = new AccountManager(accounts, accountManagerOpts)
     this._tokenStats = new TokenStats(tokenStatsOpts)
+    this._startTime = Date.now()
     this._running = false
     this._listeningPort = null
     this._server = http.createServer((req, res) => this._handleRequest(req, res))
@@ -189,14 +209,23 @@ export class ProxyServer {
 
     if (req.method === 'GET' && req.url === '/v1/models') {
       this._handleModels(res)
+    } else if (req.method === 'GET' && req.url === '/v1/stats') {
+      this._handleStats(res)
     } else if (req.method === 'POST' && req.url === '/v1/chat/completions') {
       this._handleChatCompletions(req, res).catch(err => {
-        sendJson(res, 500, { error: 'Internal server error', message: err.message })
+        console.error('[proxy] Internal error:', err)
+        // 📖 Return 413 for body-too-large, generic 500 for everything else — never leak stack traces
+        const status = err.statusCode === 413 ? 413 : 500
+        const msg = err.statusCode === 413 ? 'Request body too large' : 'Internal server error'
+        sendJson(res, status, { error: msg })
       })
     } else if (req.method === 'POST' && req.url === '/v1/messages') {
       // 📖 Anthropic Messages API translation — enables Claude Code compatibility
       this._handleAnthropicMessages(req, res).catch(err => {
-        sendJson(res, 500, { error: 'Internal server error', message: err.message })
+        console.error('[proxy] Internal error:', err)
+        const status = err.statusCode === 413 ? 413 : 500
+        const msg = err.statusCode === 413 ? 'Request body too large' : 'Internal server error'
+        sendJson(res, status, { error: msg })
       })
     } else if (req.method === 'POST' && (req.url === '/v1/completions' || req.url === '/v1/responses')) {
       // These legacy/alternative OpenAI endpoints are not supported by the proxy.
@@ -288,10 +317,14 @@ export class ProxyServer {
       }
     }
 
-    // 5. Retry loop
+    // 5. Retry loop with progressive backoff
     let pendingSwitchReason = null
     let previousAccount = null
     for (let attempt = 0; attempt < this._retries; attempt++) {
+      // 📖 Apply backoff delay before retries (first attempt is immediate)
+      const delay = this._retryDelays[Math.min(attempt, this._retryDelays.length - 1)]
+      if (delay > 0) await new Promise(r => setTimeout(r, delay + Math.random() * 100))
+
       // First attempt: respect sticky session.
       // Subsequent retries: fresh P2C (don't hammer the same failed account).
       const selectOpts = attempt === 0
@@ -369,7 +402,13 @@ export class ProxyServer {
 
       // Build the full upstream URL from the account's base URL
       const baseUrl = account.url.replace(/\/$/, '')
-      const upstreamUrl = new URL(baseUrl + '/chat/completions')
+      let upstreamUrl
+      try {
+        upstreamUrl = new URL(baseUrl + '/chat/completions')
+      } catch {
+        // 📖 Malformed upstream URL — resolve as network error so retry loop can continue
+        return resolve({ done: false, statusCode: 0, responseBody: 'Invalid upstream URL', networkError: true })
+      }
 
       // Choose http or https module BEFORE creating the request
       const client = selectClient(account.url)
@@ -405,10 +444,14 @@ export class ProxyServer {
 
             // Tap the data stream to capture usage from the last data line.
             // Register BEFORE pipe() so both listeners share the same event queue.
+            // 📖 sseLineBuffer persists between chunks to handle lines split across boundaries
             let lastChunkData = ''
+            let sseLineBuffer = ''
             upstreamRes.on('data', chunk => {
-              const text = chunk.toString()
-              const lines = text.split('\n')
+              sseLineBuffer += chunk.toString()
+              const lines = sseLineBuffer.split('\n')
+              // 📖 Last element may be an incomplete line — keep it for next chunk
+              sseLineBuffer = lines.pop() || ''
               for (const line of lines) {
                 if (line.startsWith('data: ') && !line.includes('[DONE]')) {
                   lastChunkData = line.slice(6).trim()
@@ -447,6 +490,10 @@ export class ProxyServer {
               const quotaUpdated = this._accountManager.updateQuota(account.id, headers)
               this._persistQuotaSnapshot(account, quotaUpdated)
             })
+
+            // 📖 Error handlers on both sides of the pipe to prevent uncaught errors
+            upstreamRes.on('error', err => { if (!clientRes.destroyed) clientRes.destroy(err) })
+            clientRes.on('error', () => { if (!upstreamRes.destroyed) upstreamRes.destroy() })
 
             // Pipe after listeners are registered; upstream → client, no buffering
             upstreamRes.pipe(clientRes)
@@ -623,6 +670,35 @@ export class ProxyServer {
     })
   }
 
+  // ── GET /v1/stats ──────────────────────────────────────────────────────────
+
+  /**
+   * 📖 Authenticated stats endpoint — returns per-account health, token stats summary,
+   * and proxy uptime. Useful for monitoring and debugging.
+   */
+  _handleStats(res) {
+    const healthByAccount = this._accountManager.getAllHealth()
+    const summary = this._tokenStats.getSummary()
+
+    // 📖 Compute totals from the summary data
+    const dailyEntries = Object.values(summary.daily || {})
+    const totalRequests = dailyEntries.reduce((sum, d) => sum + (d.requests || 0), 0)
+    const totalTokens = dailyEntries.reduce((sum, d) => sum + (d.tokens || 0), 0)
+
+    sendJson(res, 200, {
+      accounts: healthByAccount,
+      tokenStats: {
+        byModel: summary.byModel || {},
+        recentRequests: summary.recentRequests || [],
+      },
+      totals: {
+        requests: totalRequests,
+        tokens: totalTokens,
+      },
+      uptime: Math.floor((Date.now() - this._startTime) / 1000),
+    })
+  }
+
   // ── POST /v1/messages (Anthropic translation) ──────────────────────────────
 
   /**
@@ -666,6 +742,8 @@ export class ProxyServer {
 
     const fakeRes = {
       headersSent: false,
+      destroyed: false,
+      socket: null,
       writeHead(statusCode, headers) {
         capturedStatusCode = statusCode
         capturedHeaders = headers || {}
@@ -678,6 +756,8 @@ export class ProxyServer {
       on() { return this },
       once() { return this },
       emit() { return false },
+      destroy() { this.destroyed = true },
+      removeListener() { return this },
     }
 
     // 📖 Build a fake IncomingMessage-like with pre-parsed body
@@ -729,6 +809,8 @@ export class ProxyServer {
 
     const fakeRes = {
       headersSent: false,
+      destroyed: false,
+      socket: null,
       writeHead(statusCode, headers) {
         this.headersSent = true
         if (statusCode >= 200 && statusCode < 300) {
@@ -753,6 +835,8 @@ export class ProxyServer {
       on() { return this },
       once() { return this },
       emit() { return false },
+      destroy() { this.destroyed = true },
+      removeListener() { return this },
     }
 
     // 📖 Actually we need to pipe the upstream SSE through our transformer.
@@ -789,6 +873,10 @@ export class ProxyServer {
     sseTransform.pipe(clientRes)
 
     for (let attempt = 0; attempt < this._retries; attempt++) {
+      // 📖 Progressive backoff for retries (same as chat completions)
+      const delay = this._retryDelays[Math.min(attempt, this._retryDelays.length - 1)]
+      if (delay > 0) await new Promise(r => setTimeout(r, delay + Math.random() * 100))
+
       const selectOpts = attempt === 0
         ? { sessionFingerprint: fingerprint, requestedModel }
         : { requestedModel }
@@ -830,7 +918,12 @@ export class ProxyServer {
       const newBody = { ...body, model: account.modelId, stream: true }
       const bodyStr = JSON.stringify(newBody)
       const baseUrl = account.url.replace(/\/$/, '')
-      const upstreamUrl = new URL(baseUrl + '/chat/completions')
+      let upstreamUrl
+      try {
+        upstreamUrl = new URL(baseUrl + '/chat/completions')
+      } catch {
+        return resolve({ done: false, statusCode: 0, responseBody: 'Invalid upstream URL', networkError: true })
+      }
       const client = selectClient(account.url)
       const startTime = Date.now()
 
@@ -857,6 +950,10 @@ export class ProxyServer {
               'cache-control': 'no-cache',
             })
           }
+
+          // 📖 Error handlers on both sides of the pipe to prevent uncaught errors
+          upstreamRes.on('error', err => { if (!clientRes.destroyed) clientRes.destroy(err) })
+          clientRes.on('error', () => { if (!upstreamRes.destroyed) upstreamRes.destroy() })
 
           // 📖 Pipe upstream SSE through Anthropic translator
           upstreamRes.pipe(sseTransform, { end: true })
@@ -935,6 +1032,9 @@ export class ProxyServer {
     }
 
     for (let attempt = 0; attempt < this._retries; attempt++) {
+      const delay = this._retryDelays[Math.min(attempt, this._retryDelays.length - 1)]
+      if (delay > 0) await new Promise(r => setTimeout(r, delay + Math.random() * 100))
+
       const selectOpts = attempt === 0
         ? { sessionFingerprint: fingerprint, requestedModel }
         : { requestedModel }

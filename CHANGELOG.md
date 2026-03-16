@@ -2,24 +2,56 @@
 
 ---
 
-## 0.2.18
+## 0.3.0
 
 ### Added
-- **Always-on background proxy daemon**: The FCM proxy can now run as a persistent background service via `launchd` (macOS) or `systemd` (Linux). Claude Code, Gemini CLI, and all other tools get free model access 24/7 — no need to keep the TUI open.
-- **Anthropic wire format translation**: Native bidirectional translation between Anthropic Messages API (`POST /v1/messages`) and OpenAI Chat Completions. Claude Code works natively through the FCM proxy without needing the external `free-claude-code` Python proxy.
-- **Dedicated Proxy & Daemon overlay**: New full-page overlay (from Settings → "Proxy & Daemon settings →") with proxy config, daemon status, restart, stop, force-kill, and log viewer — all in one clean interface.
-- **CLI daemon subcommand**: `free-coding-models daemon [status|install|uninstall|restart|stop|logs]` for headless daemon control.
+- **Always-on background proxy service**: FCM Proxy V2 can run as a persistent background service via `launchd` (macOS) or `systemd` (Linux). All tools get free model access 24/7 — no need to keep the TUI open.
+- **Anthropic wire format translation**: Native bidirectional translation between Anthropic Messages API (`POST /v1/messages`) and OpenAI Chat Completions. Claude Code works natively through FCM Proxy V2.
+- **Dedicated FCM Proxy V2 overlay**: New full-page overlay (from Settings → "FCM Proxy V2 settings →" or `J` key) with proxy config, service status, restart, stop, force-kill, and log viewer.
+- **`J` key — FCM Proxy V2 shortcut**: Opens the proxy settings directly from the main view. Footer shows a green `📡 FCM Proxy V2 On` badge when active, red `📡 FCM Proxy V2 Off` when disabled.
+- **CLI daemon subcommand**: `free-coding-models daemon [status|install|uninstall|restart|stop|logs]` for headless service control.
 - **Stable proxy identity**: Persistent token and preferred port (`18045`) survive daemon restarts — env files and tool configs remain valid across reboots.
 - **Health endpoint**: `GET /v1/health` returns uptime, version, and account/model counts for liveness probes.
-- **Hot-reload**: Daemon watches `~/.free-coding-models.json` and reloads proxy topology (accounts, models) automatically when config changes.
-- **Version mismatch detection**: The overlay warns when the running daemon version differs from the installed FCM version.
+- **`GET /v1/stats` endpoint**: Authenticated endpoint returning per-account health, token stats, totals, and proxy uptime for monitoring and debugging.
+- **Hot-reload**: FCM Proxy V2 watches `~/.free-coding-models.json` and reloads proxy topology automatically when config changes.
+- **Version mismatch detection**: The overlay warns when the running service version differs from the installed FCM version.
 - **Dev environment guard**: `installDaemon()` is blocked when running from a git checkout to prevent hardcoding local repo paths in OS service files.
+- **Generalized proxy sync module** (`src/proxy-sync.js`): Single-endpoint proxy config sync for 12 tools (OpenCode, OpenClaw, Crush, Goose, Pi, Aider, Amp, Qwen, Claude Code, Codex, OpenHands). Writes one `fcm-proxy` provider with all models, cleans up old per-provider `fcm-*` vestiges.
+- **Retry backoff with jitter**: Progressive delays between retries (0ms, 300ms, 800ms + random jitter) to avoid re-hitting the same rate-limit window on 429s.
+- **Automatic account cooldown on consecutive failures**: When an account accumulates 3+ consecutive non-429 failures, it enters graduated cooldown (30s → 60s → 120s). Proxy routes around failing accounts automatically. Resets on success.
 
 ### Changed
-- **Proxy settings moved to dedicated overlay**: The 5 proxy/daemon rows in Settings are replaced by a single "Proxy & Daemon settings →" entry that opens a full-page manager with explanations, status, and all actions.
+- **Rebranded to FCM Proxy V2**: All user-facing references to "daemon", "FCM Proxy", and "Proxy & Daemon" renamed to "FCM Proxy V2" across CLI messages, TUI overlays, endpoint installer, and service descriptions.
+- **Proxy overlay generalized for all tools**: "Persist proxy in OpenCode" → "Auto-sync proxy to {tool}", "Clean OpenCode proxy config" → "Clean {tool} proxy config". New "Active tool" selector row cycles through all 12 proxy-syncable tools.
+- **Feedback overlay redesigned**: Renamed "Report bug" to "Feedback, bugs & requests", input is now left-aligned with a visible cursor, framed by horizontal separator lines. `I` key now covers all feedback types.
+- **Proxy settings moved to dedicated overlay**: The 5 proxy rows in Settings are replaced by a single entry that opens a full-page manager.
 - **Proxy topology extracted to shared module**: `src/proxy-topology.js` is now used by both TUI and daemon, eliminating code duplication.
-- **TUI delegates to daemon**: `ensureProxyRunning()` checks for a running daemon first and reuses its port/token instead of starting an in-process proxy.
-- **Endpoint installer supports proxy mode**: When installing endpoints (Y key) with "FCM Proxy" connection mode, env files now point to the daemon's stable token/port.
+- **TUI delegates to background service**: `ensureProxyRunning()` checks for a running service first and reuses its port/token instead of starting an in-process proxy.
+- **Endpoint installer supports proxy mode**: When installing endpoints (Y key) with "FCM Proxy V2" connection mode, env files point to the service's stable token/port.
+- **Claude Code / Codex / Gemini require proxy**: These tools now refuse to launch without FCM Proxy V2 enabled, showing clear instructions to enable it. When proxy is on, they route through it automatically.
+- **Goose launcher rewritten**: Now writes proper custom provider JSON + updates `config.yaml` with `GOOSE_PROVIDER`/`GOOSE_MODEL` for guaranteed auto-selection (replaces obsolete `OPENAI_HOST`/`OPENAI_MODEL` env vars).
+- **Crush launcher improved**: Removed `disable_default_providers` flag, sets both `models.large` and `models.small` defaults for reliable auto-selection.
+- **Pi launcher improved**: Now passes `--provider` and `--model` CLI flags for guaranteed model pre-selection.
+
+### Fixed
+- **Terminal width warning behavior**: Warning now shows max 2 times per session with emojis and double spacing.
+- **Body size limit** (security): `readBody()` now enforces a 10 MB limit. Oversized payloads receive 413.
+- **Stack trace leak prevention** (security): Error responses no longer include `err.message`.
+- **SSE buffer overflow guard** (security): Anthropic SSE transformer limits buffer to 1 MB.
+- **`new URL()` crash protection**: Malformed upstream URLs caught instead of crashing.
+- **`execSync` timeout safety**: All `execSync` calls in daemon-manager use a 15-second timeout via `execSyncSafe()`.
+- **Daemon startup crash protection**: `loadConfig()`, `buildMergedModelsForDaemon()`, and `buildProxyTopologyFromConfig()` wrapped in try/catch.
+- **`resolveCloudflareUrl()` null guard**: Empty provider URLs skipped instead of crashing.
+- **Health check buffer limit**: Responses capped at 64 KB.
+- **SSE line buffering**: SSE tap now correctly handles lines split across chunk boundaries.
+- **Empty choices fallback**: `translateOpenAIToAnthropic` returns fallback content block when OpenAI response has empty choices.
+- **Tool calls streaming index tracking**: Proper `nextBlockIndex`/`currentBlockIndex` counters for correct indexing across multiple tool calls.
+- **Pipe error propagation**: Error handlers on both sides of SSE pipes to prevent uncaught errors on mid-stream disconnects.
+- **Input validation**: `translateAnthropicToOpenAI` guards against null/undefined/non-object input.
+- **Hot-reload race condition**: Config watcher uses `reloadInProgress` flag to prevent concurrent reloads.
+- **Fake response stubs**: Added `destroy()`, `removeListener()`, and `socket: null` for better compatibility.
+- **API key trimming**: Whitespace-trimmed and empty keys filtered out in topology builder.
+- **`writeFileSync` error messages**: Plist and systemd service file write failures now throw clear error messages.
 
 ---
 

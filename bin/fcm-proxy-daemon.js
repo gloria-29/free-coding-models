@@ -79,7 +79,7 @@ function removeDaemonStatus() {
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
-  log(`Starting FCM Proxy Daemon v${PKG_VERSION} (PID: ${process.pid})`)
+  log(`Starting FCM Proxy V2 v${PKG_VERSION} (PID: ${process.pid})`)
 
   // 📖 Dynamic imports — keep startup fast, avoid loading TUI-specific modules
   const { loadConfig, getProxySettings } = await import('../src/config.js')
@@ -87,9 +87,15 @@ async function main() {
   const { buildProxyTopologyFromConfig, buildMergedModelsForDaemon } = await import('../src/proxy-topology.js')
   const { sources } = await import('../sources.js')
 
-  // 📖 Load config and build initial topology
-  let fcmConfig = loadConfig()
-  const proxySettings = getProxySettings(fcmConfig)
+  // 📖 Load config and build initial topology — wrapped in try/catch to provide clear error on startup failures
+  let fcmConfig, proxySettings, mergedModels, accounts, proxyModels
+  try {
+    fcmConfig = loadConfig()
+    proxySettings = getProxySettings(fcmConfig)
+  } catch (err) {
+    logError(`Fatal: Failed to load config: ${err.message}`)
+    process.exit(1)
+  }
 
   if (!proxySettings.stableToken) {
     logError('No stableToken in proxy settings — run the TUI first to initialize config.')
@@ -99,14 +105,21 @@ async function main() {
   const port = proxySettings.preferredPort || DEFAULT_DAEMON_PORT
   const token = proxySettings.stableToken
 
-  log(`Building merged model catalog...`)
-  let mergedModels = await buildMergedModelsForDaemon()
-  log(`Merged ${mergedModels.length} model groups`)
+  try {
+    log(`Building merged model catalog...`)
+    mergedModels = await buildMergedModelsForDaemon()
+    log(`Merged ${mergedModels.length} model groups`)
 
-  let { accounts, proxyModels } = buildProxyTopologyFromConfig(fcmConfig, mergedModels, sources)
+    const topology = buildProxyTopologyFromConfig(fcmConfig, mergedModels, sources)
+    accounts = topology.accounts
+    proxyModels = topology.proxyModels
+  } catch (err) {
+    logError(`Fatal: Failed to build initial topology: ${err.message}`)
+    process.exit(1)
+  }
 
   if (accounts.length === 0) {
-    logError('No API keys configured — daemon has no accounts to serve. Add keys via the TUI.')
+    logError('No API keys configured — FCM Proxy V2 has no accounts to serve. Add keys via the TUI.')
     process.exit(1)
   }
 
@@ -138,10 +151,19 @@ async function main() {
 
     // 📖 Set up config file watcher for hot-reload
     let reloadTimeout = null
+    // 📖 Prevents concurrent reloads — if a reload is in progress, the next
+    //    watcher event will be queued (one pending max) instead of stacking
+    let reloadInProgress = false
+    let reloadQueued = false
     const configWatcher = watch(CONFIG_PATH, () => {
       // 📖 Debounce 1s — config writes can trigger multiple fs events
       if (reloadTimeout) clearTimeout(reloadTimeout)
       reloadTimeout = setTimeout(async () => {
+        if (reloadInProgress) {
+          reloadQueued = true
+          return
+        }
+        reloadInProgress = true
         try {
           log('Config file changed — reloading topology...')
           fcmConfig = loadConfig()
@@ -167,6 +189,13 @@ async function main() {
           log(`Topology reloaded: ${accounts.length} accounts, ${Object.keys(proxyModels).length} models`)
         } catch (err) {
           logError(`Hot-reload failed: ${err.message}`)
+        } finally {
+          reloadInProgress = false
+          // 📖 If another reload was queued during this one, trigger it now
+          if (reloadQueued) {
+            reloadQueued = false
+            configWatcher.emit('change')
+          }
         }
       }, 1000)
     })
@@ -180,7 +209,7 @@ async function main() {
         await proxy.stop()
       } catch { /* best-effort */ }
       removeDaemonStatus()
-      log('Daemon stopped cleanly.')
+      log('FCM Proxy V2 stopped cleanly.')
       process.exit(0)
     }
 
@@ -189,11 +218,11 @@ async function main() {
     process.on('exit', () => removeDaemonStatus())
 
     // 📖 Keep the process alive
-    log('Daemon ready. Waiting for requests...')
+    log('FCM Proxy V2 ready. Waiting for requests...')
 
   } catch (err) {
     if (err.code === 'EADDRINUSE') {
-      logError(`Port ${port} is already in use. Another daemon may be running, or another process occupies this port.`)
+      logError(`Port ${port} is already in use. Another FCM Proxy V2 instance may be running, or another process occupies this port.`)
       logError(`Change proxy.preferredPort in ~/.free-coding-models.json or stop the conflicting process.`)
       process.exit(2)
     }
