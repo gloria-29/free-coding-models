@@ -5,27 +5,27 @@
  * @details
  *   This module centralizes all overlay rendering in one place:
  *   - Settings, Install Endpoints, Help, Log, Smart Recommend, Feedback, Changelog
- *   - FCM Proxy V2 overlay with tool selector, auto-sync toggle, and cleanup
+ *   - FCM Proxy V2 overlay with current-tool auto-sync toggle and cleanup
  *   - Settings diagnostics for provider key tests, including wrapped retry/error details
  *   - Recommend analysis timer orchestration and progress updates
  *
  *   The factory pattern keeps stateful UI logic isolated while still
  *   allowing the main CLI to control shared state and dependencies.
  *
- *   📖 The proxy overlay rows are: Enable → Active tool → Auto-sync → Port → Cleanup → Install/Restart/Stop/Kill/Logs
- *   📖 Tool selector cycles through PROXY_SYNCABLE_TOOLS (12 tools from proxy-sync.js)
+ *   📖 The proxy overlay rows are: Enable → Auto-sync current tool → Port → Cleanup → Install/Restart/Stop/Kill/Logs
  *   📖 Feedback overlay (I key) combines feature requests + bug reports in one left-aligned input
  *
  *   → Functions:
  *   - `createOverlayRenderers` — returns renderer + analysis helpers
  *
  * @exports { createOverlayRenderers }
- * @see ./proxy-sync.js — PROXY_SYNCABLE_TOOLS used by the tool selector
+ * @see ./proxy-sync.js — resolveProxySyncToolMode powers current-tool proxy sync hints
  * @see ./key-handler.js — handles keypresses for all overlay interactions
  */
 
 import { loadChangelog } from './changelog-loader.js'
-import { PROXY_SYNCABLE_TOOLS } from './proxy-sync.js'
+import { buildCliHelpLines } from './cli-help.js'
+import { resolveProxySyncToolMode } from './proxy-sync.js'
 
 export function createOverlayRenderers(state, deps) {
   const {
@@ -627,7 +627,7 @@ export function createOverlayRenderers(state, deps) {
     lines.push(`  ${chalk.yellow('X')}  Toggle token log page  ${chalk.dim('(shows recent request usage from request-log.jsonl)')}`)
     lines.push(`  ${chalk.yellow('Z')}  Cycle tool mode  ${chalk.dim('(OpenCode → Desktop → OpenClaw → Crush → Goose → Pi → Aider → Claude Code → Codex → Gemini → Qwen → OpenHands → Amp)')}`)
     lines.push(`  ${chalk.yellow('F')}  Toggle favorite on selected row  ${chalk.dim('(⭐ pinned at top, persisted)')}`)
-    lines.push(`  ${chalk.yellow('Y')}  Install endpoints  ${chalk.dim('(provider catalog → all tools, Direct or FCM Proxy V2)')}`)
+    lines.push(`  ${chalk.yellow('Y')}  Install endpoints  ${chalk.dim('(provider catalog → compatible tools, Direct or FCM Proxy V2)')}`)
     lines.push(`  ${chalk.yellow('Q')}  Smart Recommend  ${chalk.dim('(🎯 find the best model for your task — questionnaire + live analysis)')}`)
     lines.push(`  ${chalk.rgb(255, 87, 51).bold('I')}  Feedback, bugs & requests  ${chalk.dim('(📝 send anonymous feedback, bug reports, or feature requests)')}`)
     lines.push(`  ${chalk.yellow('J')}  FCM Proxy V2 settings  ${chalk.dim('(📡 open proxy configuration and background service management)')}`)
@@ -651,29 +651,7 @@ export function createOverlayRenderers(state, deps) {
     lines.push(`  ${chalk.yellow('U')}            Check updates manually`)
     lines.push(`  ${chalk.yellow('Esc')}          Close settings`)
     lines.push('')
-    lines.push(`  ${chalk.bold('CLI Flags')}`)
-    lines.push(`  ${chalk.dim('Usage: free-coding-models [options]')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --opencode')}           ${chalk.dim('OpenCode CLI mode')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --opencode-desktop')}   ${chalk.dim('OpenCode Desktop mode')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --openclaw')}           ${chalk.dim('OpenClaw mode')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --crush')}              ${chalk.dim('Crush mode')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --goose')}              ${chalk.dim('Goose mode')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --pi')}                 ${chalk.dim('Pi mode')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --aider')}              ${chalk.dim('Aider mode')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --claude-code')}        ${chalk.dim('Claude Code mode')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --codex')}              ${chalk.dim('Codex CLI mode')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --gemini')}             ${chalk.dim('Gemini CLI mode')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --qwen')}               ${chalk.dim('Qwen Code mode')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --openhands')}          ${chalk.dim('OpenHands mode')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --amp')}                ${chalk.dim('Amp mode')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --best')}               ${chalk.dim('Only top tiers (A+, S, S+)')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --fiable')}             ${chalk.dim('10s reliability analysis')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --tier S|A|B|C')}       ${chalk.dim('Filter by tier letter')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --no-telemetry')}       ${chalk.dim('Disable telemetry for this run')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --recommend')}          ${chalk.dim('Auto-open Smart Recommend on start')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --profile <name>')}     ${chalk.dim('Load a saved config profile')}`)
-    lines.push(`  ${chalk.cyan('free-coding-models --clean-proxy')}       ${chalk.dim('Remove persisted fcm-proxy config from OpenCode')}`)
-    lines.push(`  ${chalk.dim('Flags can be combined: --openclaw --tier S')}`)
+    lines.push(...buildCliHelpLines({ chalk, indent: '  ', title: 'CLI Flags' }))
     lines.push('')
     // 📖 Help overlay can be longer than viewport, so keep a dedicated scroll offset.
     const { visible, offset } = sliceOverlayLines(lines, state.helpScrollOffset, state.terminalRows)
@@ -1273,15 +1251,14 @@ export function createOverlayRenderers(state, deps) {
 
     // 📖 Row indices — these control cursor navigation
     const ROW_PROXY_ENABLED = 0
-    const ROW_PROXY_TOOL = 1
-    const ROW_PROXY_SYNC = 2
-    const ROW_PROXY_PORT = 3
-    const ROW_PROXY_CLEANUP = 4
-    const ROW_DAEMON_INSTALL = 5
-    const ROW_DAEMON_RESTART = 6
-    const ROW_DAEMON_STOP = 7
-    const ROW_DAEMON_KILL = 8
-    const ROW_DAEMON_LOGS = 9
+    const ROW_PROXY_SYNC = 1
+    const ROW_PROXY_PORT = 2
+    const ROW_PROXY_CLEANUP = 3
+    const ROW_DAEMON_INSTALL = 4
+    const ROW_DAEMON_RESTART = 5
+    const ROW_DAEMON_STOP = 6
+    const ROW_DAEMON_KILL = 7
+    const ROW_DAEMON_LOGS = 8
 
     const daemonStatus = state.daemonStatus || 'not-installed'
     const daemonInfo = state.daemonInfo
@@ -1318,10 +1295,16 @@ export function createOverlayRenderers(state, deps) {
     lines.push(`  ${chalk.dim('  to this proxy which handles key rotation, rate limiting, and failover.')}`)
     lines.push('')
 
-    // 📖 Resolve active tool for proxy sync (persisted or fallback to Z-mode)
-    const activeProxyTool = proxySettings.activeTool || state.mode || 'opencode'
-    const activeToolMeta = getToolMeta(activeProxyTool)
-    const activeToolLabel = `${activeToolMeta.emoji} ${activeToolMeta.label}`
+    // 📖 Proxy sync now always follows the currently selected Z-mode when supported.
+    const currentToolMode = state.mode || 'opencode'
+    const currentToolMeta = getToolMeta(currentToolMode)
+    const currentToolLabel = `${currentToolMeta.emoji} ${currentToolMeta.label}`
+    const proxySyncTool = resolveProxySyncToolMode(currentToolMode)
+    const proxySyncHint = proxySyncTool
+      ? chalk.dim(`  Current tool: ${currentToolLabel}`)
+      : chalk.yellow(`  Current tool: ${currentToolLabel} (launcher-only, no persisted proxy config)`)
+    lines.push(proxySyncHint)
+    lines.push('')
 
     // 📖 Row 0: Proxy enabled toggle
     const r0b = state.proxyDaemonCursor === ROW_PROXY_ENABLED ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
@@ -1330,20 +1313,18 @@ export function createOverlayRenderers(state, deps) {
     cursorLineByRow[ROW_PROXY_ENABLED] = lines.length
     lines.push(state.proxyDaemonCursor === ROW_PROXY_ENABLED ? chalk.bgRgb(20, 45, 60)(r0) : r0)
 
-    // 📖 Row 1: Active tool selector — cycles through proxy-syncable tools
-    const r1b = state.proxyDaemonCursor === ROW_PROXY_TOOL ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-    const r1 = `${r1b}${chalk.bold('Active tool').padEnd(44)} ${chalk.cyanBright(activeToolLabel)} ${chalk.dim('← Enter to cycle')}`
-    cursorLineByRow[ROW_PROXY_TOOL] = lines.length
-    lines.push(state.proxyDaemonCursor === ROW_PROXY_TOOL ? chalk.bgRgb(20, 45, 60)(r1) : r1)
-
-    // 📖 Row 2: Auto-sync proxy config to active tool
+    // 📖 Row 1: Auto-sync proxy config to the current tool when that tool supports persisted sync.
     const r2b = state.proxyDaemonCursor === ROW_PROXY_SYNC ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
     const r2val = proxySettings.syncToOpenCode ? chalk.greenBright('Enabled') : chalk.dim('Disabled')
-    const r2 = `${r2b}${chalk.bold(`Auto-sync proxy to ${activeToolMeta.label}`).padEnd(44)} ${r2val}`
+    const r2label = proxySyncTool
+      ? `Auto-sync proxy to ${currentToolMeta.label}`
+      : 'Auto-sync proxy to current tool'
+    const r2note = proxySyncTool ? '' : ` ${chalk.dim('(unavailable for this mode)')}`
+    const r2 = `${r2b}${chalk.bold(r2label).padEnd(44)} ${r2val}${r2note}`
     cursorLineByRow[ROW_PROXY_SYNC] = lines.length
     lines.push(state.proxyDaemonCursor === ROW_PROXY_SYNC ? chalk.bgRgb(20, 45, 60)(r2) : r2)
 
-    // 📖 Row 3: Preferred port
+    // 📖 Row 2: Preferred port
     const r3b = state.proxyDaemonCursor === ROW_PROXY_PORT ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
     const r3val = state.settingsProxyPortEditMode && state.proxyDaemonCursor === ROW_PROXY_PORT
       ? chalk.cyanBright(`${state.settingsProxyPortBuffer}▏`)
@@ -1352,9 +1333,15 @@ export function createOverlayRenderers(state, deps) {
     cursorLineByRow[ROW_PROXY_PORT] = lines.length
     lines.push(state.proxyDaemonCursor === ROW_PROXY_PORT ? chalk.bgRgb(20, 45, 60)(r3) : r3)
 
-    // 📖 Row 4: Clean tool proxy config
+    // 📖 Row 3: Clean current tool proxy config
     const r4b = state.proxyDaemonCursor === ROW_PROXY_CLEANUP ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-    const r4 = `${r4b}${chalk.bold(`Clean ${activeToolMeta.label} proxy config`).padEnd(44)} ${chalk.dim('Enter → removes all fcm-* entries')}`
+    const r4title = proxySyncTool
+      ? `Clean ${currentToolMeta.label} proxy config`
+      : `Clean ${currentToolMeta.label} proxy config`
+    const r4hint = proxySyncTool
+      ? chalk.dim('Enter → removes all fcm-* entries')
+      : chalk.dim('Unavailable for this mode')
+    const r4 = `${r4b}${chalk.bold(r4title).padEnd(44)} ${r4hint}`
     cursorLineByRow[ROW_PROXY_CLEANUP] = lines.length
     lines.push(state.proxyDaemonCursor === ROW_PROXY_CLEANUP ? chalk.bgRgb(45, 30, 30)(r4) : r4)
 

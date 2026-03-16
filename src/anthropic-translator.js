@@ -15,13 +15,50 @@
  *   → translateAnthropicToOpenAI(body) — Convert Anthropic Messages request → OpenAI chat completions
  *   → translateOpenAIToAnthropic(openaiResponse, requestModel) — Convert OpenAI JSON response → Anthropic
  *   → createAnthropicSSETransformer(requestModel) — Create a Transform stream for SSE translation
+ *   → estimateAnthropicTokens(body) — Fast local token estimate for `/v1/messages/count_tokens`
  *
- * @exports translateAnthropicToOpenAI, translateOpenAIToAnthropic, createAnthropicSSETransformer
+ * @exports translateAnthropicToOpenAI, translateOpenAIToAnthropic, createAnthropicSSETransformer, estimateAnthropicTokens
  * @see src/proxy-server.js — routes /v1/messages through this translator
  */
 
 import { Transform } from 'node:stream'
 import { randomUUID } from 'node:crypto'
+
+function normalizeThinkingText(block) {
+  if (!block || typeof block !== 'object') return ''
+  if (typeof block.text === 'string' && block.text) return block.text
+  if (typeof block.thinking === 'string' && block.thinking) return block.thinking
+  if (typeof block.summary === 'string' && block.summary) return block.summary
+  return ''
+}
+
+function contentBlocksToText(blocks, { includeThinking = false } = {}) {
+  return blocks
+    .map((block) => {
+      if (block?.type === 'thinking' && includeThinking) {
+        const thinkingText = normalizeThinkingText(block)
+        return thinkingText ? `<thinking>${thinkingText}</thinking>` : ''
+      }
+      if (block?.type === 'redacted_thinking' && includeThinking) {
+        return '<thinking>[redacted]</thinking>'
+      }
+      return block?.type === 'text' ? block.text : ''
+    })
+    .filter(Boolean)
+}
+
+function extractReasoningBlocks(message = {}) {
+  if (Array.isArray(message.reasoning)) {
+    return message.reasoning
+      .map((entry) => normalizeThinkingText(entry))
+      .filter(Boolean)
+      .map((text) => ({ type: 'thinking', thinking: text }))
+  }
+  if (typeof message.reasoning_content === 'string' && message.reasoning_content.trim()) {
+    return [{ type: 'thinking', thinking: message.reasoning_content.trim() }]
+  }
+  return []
+}
 
 /**
  * 📖 Translate an Anthropic Messages API request body to OpenAI Chat Completions format.
@@ -48,10 +85,7 @@ export function translateAnthropicToOpenAI(body) {
       openaiMessages.push({ role: 'system', content: body.system })
     } else if (Array.isArray(body.system)) {
       // 📖 Anthropic supports system as array of content blocks
-      const text = body.system
-        .filter(b => b.type === 'text')
-        .map(b => b.text)
-        .join('\n\n')
+      const text = contentBlocksToText(body.system, { includeThinking: true }).join('\n\n')
       if (text) openaiMessages.push({ role: 'system', content: text })
     }
   }
@@ -65,9 +99,7 @@ export function translateAnthropicToOpenAI(body) {
         openaiMessages.push({ role, content: msg.content })
       } else if (Array.isArray(msg.content)) {
         // 📖 Anthropic content blocks: [{type: "text", text: "..."}, {type: "tool_result", ...}]
-        const textParts = msg.content
-          .filter(b => b.type === 'text')
-          .map(b => b.text)
+        const textParts = contentBlocksToText(msg.content, { includeThinking: true })
         const toolResults = msg.content.filter(b => b.type === 'tool_result')
         const toolUses = msg.content.filter(b => b.type === 'tool_use')
 
@@ -154,6 +186,10 @@ export function translateOpenAIToAnthropic(openaiResponse, requestModel) {
   const choice = openaiResponse.choices?.[0]
   const message = choice?.message || {}
   const content = []
+
+  for (const reasoningBlock of extractReasoningBlocks(message)) {
+    content.push(reasoningBlock)
+  }
 
   // 📖 Text content → Anthropic text block
   if (message.content) {
@@ -367,4 +403,38 @@ export function createAnthropicSSETransformer(requestModel) {
     transform,
     getUsage: () => ({ input_tokens: inputTokens, output_tokens: outputTokens }),
   }
+}
+
+function estimateTokenCountFromText(text) {
+  const normalized = String(text || '').trim()
+  if (!normalized) return 0
+  return Math.ceil(normalized.length / 4)
+}
+
+export function estimateAnthropicTokens(body) {
+  const openaiBody = translateAnthropicToOpenAI(body)
+  const messageTokens = Array.isArray(openaiBody.messages)
+    ? openaiBody.messages.reduce((total, message) => {
+        let nextTotal = total + 4
+        if (typeof message.content === 'string') {
+          nextTotal += estimateTokenCountFromText(message.content)
+        }
+        if (Array.isArray(message.tool_calls)) {
+          for (const toolCall of message.tool_calls) {
+            nextTotal += estimateTokenCountFromText(toolCall.function?.name || '')
+            nextTotal += estimateTokenCountFromText(toolCall.function?.arguments || '')
+          }
+        }
+        if (typeof message.tool_call_id === 'string') {
+          nextTotal += estimateTokenCountFromText(message.tool_call_id)
+        }
+        return nextTotal
+      }, 2)
+    : 0
+
+  const toolTokens = Array.isArray(body?.tools)
+    ? body.tools.reduce((total, tool) => total + estimateTokenCountFromText(JSON.stringify(tool || {})), 0)
+    : 0
+
+  return messageTokens + toolTokens
 }

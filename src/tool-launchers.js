@@ -19,15 +19,19 @@
  *   📖 Crush: writes crush.json with provider config + models.large/small defaults
  *   📖 Pi: uses --provider/--model CLI flags for guaranteed auto-selection
  *   📖 Aider: writes ~/.aider.conf.yml + passes --model flag
- *   📖 Claude Code: uses ANTHROPIC_BASE_URL env + --model flag (proxy translates Anthropic ↔ OpenAI)
+ *   📖 Claude Code: uses ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN only (mirrors free-claude-code)
+ *   📖 Codex CLI: uses a custom model_provider override so Codex stays in explicit API-provider mode
+ *   📖 Gemini CLI: proxy mode is capability-gated because older builds do not support custom base URL routing cleanly
  *
  * @functions
  *   → `resolveLauncherModelId` — choose the provider-specific id or proxy slug for a launch
+ *   → `buildCodexProxyArgs` — force Codex into a proxy-backed custom provider config
+ *   → `inspectGeminiCliSupport` — detect whether the installed Gemini CLI can use proxy mode safely
  *   → `writeGooseConfig` — install provider + set GOOSE_PROVIDER/GOOSE_MODEL in config.yaml
  *   → `writeCrushConfig` — write provider + models.large/small to crush.json
  *   → `startExternalTool` — configure and launch the selected external tool mode
  *
- * @exports resolveLauncherModelId, startExternalTool
+ * @exports resolveLauncherModelId, buildCodexProxyArgs, inspectGeminiCliSupport, startExternalTool
  *
  * @see src/tool-metadata.js
  * @see src/provider-metadata.js
@@ -35,10 +39,10 @@
  */
 
 import chalk from 'chalk'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'fs'
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync, copyFileSync } from 'fs'
 import { homedir } from 'os'
-import { dirname, join } from 'path'
-import { spawn } from 'child_process'
+import { delimiter, dirname, join } from 'path'
+import { spawn, spawnSync } from 'child_process'
 import { sources } from '../sources.js'
 import { PROVIDER_COLOR } from './render-table.js'
 import { getApiKey, getProxySettings } from './config.js'
@@ -46,6 +50,31 @@ import { ENV_VAR_NAMES, isWindows } from './provider-metadata.js'
 import { getToolMeta } from './tool-metadata.js'
 import { ensureProxyRunning, resolveProxyModelId } from './opencode.js'
 import { PROVIDER_METADATA } from './provider-metadata.js'
+
+const OPENAI_COMPAT_ENV_KEYS = [
+  'OPENAI_API_KEY',
+  'OPENAI_BASE_URL',
+  'OPENAI_API_BASE',
+  'OPENAI_MODEL',
+  'LLM_API_KEY',
+  'LLM_BASE_URL',
+  'LLM_MODEL',
+]
+const ANTHROPIC_ENV_KEYS = [
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_MODEL',
+]
+const GEMINI_ENV_KEYS = [
+  'GEMINI_API_KEY',
+  'GOOGLE_API_KEY',
+  'GOOGLE_GEMINI_BASE_URL',
+  'GOOGLE_VERTEX_BASE_URL',
+]
+const PROXY_SANITIZED_ENV_KEYS = [...OPENAI_COMPAT_ENV_KEYS, ...ANTHROPIC_ENV_KEYS, ...GEMINI_ENV_KEYS]
+const GEMINI_PROXY_MIN_VERSION = '0.34.0'
+const EXPERIMENTAL_PROXY_TOOLS_NOTE = 'FCM Proxy V2 support for external tools is still in beta, so some launch and authentication flows can remain flaky while the integration stabilizes.'
 
 function ensureDir(filePath) {
   const dir = dirname(filePath)
@@ -82,6 +111,16 @@ function getProviderBaseUrl(providerKey) {
     .replace(/\/predictions$/i, '')
 }
 
+function deleteEnvKeys(env, keys) {
+  for (const key of keys) delete env[key]
+}
+
+function cloneInheritedEnv(inheritedEnv = process.env, sanitizeKeys = []) {
+  const env = { ...inheritedEnv }
+  deleteEnvKeys(env, sanitizeKeys)
+  return env
+}
+
 function applyOpenAiCompatEnv(env, apiKey, baseUrl, modelId) {
   if (!apiKey || !baseUrl || !modelId) return env
   env.OPENAI_API_KEY = apiKey
@@ -107,17 +146,23 @@ export function resolveLauncherModelId(model, useProxy = false) {
   return model?.modelId ?? ''
 }
 
-function buildToolEnv(mode, model, config) {
+export function buildToolEnv(mode, model, config, options = {}) {
+  const {
+    sanitize = false,
+    includeCompatDefaults = true,
+    includeProviderEnv = true,
+    inheritedEnv = process.env,
+  } = options
   const providerKey = model.providerKey
   const providerUrl = sources[providerKey]?.url || ''
   const baseUrl = getProviderBaseUrl(providerKey)
   const apiKey = getApiKey(config, providerKey)
-  const env = { ...process.env }
+  const env = cloneInheritedEnv(inheritedEnv, sanitize ? PROXY_SANITIZED_ENV_KEYS : [])
   const providerEnvName = ENV_VAR_NAMES[providerKey]
-  if (providerEnvName && apiKey) env[providerEnvName] = apiKey
+  if (includeProviderEnv && providerEnvName && apiKey) env[providerEnvName] = apiKey
 
   // 📖 OpenAI-compatible defaults reused by multiple CLIs.
-  if (apiKey && baseUrl) {
+  if (includeCompatDefaults && apiKey && baseUrl) {
     env.OPENAI_API_KEY = apiKey
     env.OPENAI_BASE_URL = baseUrl
     env.OPENAI_API_BASE = baseUrl
@@ -135,11 +180,120 @@ function buildToolEnv(mode, model, config) {
   }
 
   if (mode === 'gemini' && apiKey && baseUrl) {
+    env.GEMINI_API_KEY = apiKey
     env.GOOGLE_API_KEY = apiKey
     env.GOOGLE_GEMINI_BASE_URL = baseUrl
   }
 
   return { env, apiKey, baseUrl, providerUrl }
+}
+
+export function buildCodexProxyArgs(baseUrl) {
+  return [
+    '-c', 'model_provider="fcm_proxy"',
+    '-c', 'model_providers.fcm_proxy.name="FCM Proxy V2"',
+    '-c', `model_providers.fcm_proxy.base_url=${JSON.stringify(baseUrl)}`,
+    '-c', 'model_providers.fcm_proxy.env_key="FCM_PROXY_API_KEY"',
+    '-c', 'model_providers.fcm_proxy.wire_api="responses"',
+  ]
+}
+
+function compareSemver(a, b) {
+  const left = String(a || '').split('.').map(part => Number.parseInt(part, 10) || 0)
+  const right = String(b || '').split('.').map(part => Number.parseInt(part, 10) || 0)
+  const length = Math.max(left.length, right.length)
+  for (let idx = 0; idx < length; idx++) {
+    const lhs = left[idx] || 0
+    const rhs = right[idx] || 0
+    if (lhs > rhs) return 1
+    if (lhs < rhs) return -1
+  }
+  return 0
+}
+
+function findExecutableOnPath(command) {
+  const pathValue = process.env.PATH || ''
+  const candidates = process.platform === 'win32'
+    ? [command, `${command}.cmd`, `${command}.exe`]
+    : [command]
+
+  for (const dir of pathValue.split(delimiter).filter(Boolean)) {
+    for (const candidate of candidates) {
+      const fullPath = join(dir, candidate)
+      try {
+        accessSync(fullPath, constants.X_OK)
+        return fullPath
+      } catch { /* not executable */ }
+    }
+  }
+  return null
+}
+
+function findPackageJsonUpwards(startPath) {
+  let current = dirname(startPath)
+  while (current && current !== dirname(current)) {
+    const packageJsonPath = join(current, 'package.json')
+    if (existsSync(packageJsonPath)) return packageJsonPath
+    current = dirname(current)
+  }
+  return null
+}
+
+function detectGeminiCliVersion(binaryPath) {
+  if (!binaryPath) return null
+  try {
+    const realPath = realpathSync(binaryPath)
+    const versionMatch = realPath.match(/gemini-cli[\\/](\d+\.\d+\.\d+)(?:[\\/]|$)/)
+    if (versionMatch?.[1]) return versionMatch[1]
+
+    const packageJsonPath = findPackageJsonUpwards(realPath)
+    if (!packageJsonPath) return null
+    const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8'))
+    if (typeof pkg?.version === 'string' && pkg.version.length > 0) {
+      return pkg.version
+    }
+  } catch { /* best effort */ }
+  return null
+}
+
+export function extractGeminiConfigError(output) {
+  const text = String(output || '').trim()
+  if (!text.includes('Invalid configuration in ')) return null
+  const lines = text.split(/\r?\n/).filter(Boolean)
+  return lines.slice(0, 8).join('\n')
+}
+
+export function inspectGeminiCliSupport(options = {}) {
+  const binaryPath = options.binaryPath || findExecutableOnPath(options.command || 'gemini')
+  if (!binaryPath) {
+    return {
+      installed: false,
+      version: null,
+      supportsProxyBaseUrl: false,
+      configError: null,
+      reason: 'Gemini CLI is not installed in PATH.',
+    }
+  }
+
+  const version = options.version || detectGeminiCliVersion(binaryPath)
+  const helpResult = options.helpResult || spawnSync(binaryPath, ['--help'], {
+    encoding: 'utf8',
+    timeout: 5000,
+    env: options.inheritedEnv || process.env,
+  })
+  const helpOutput = `${helpResult.stdout || ''}\n${helpResult.stderr || ''}`.trim()
+  const configError = extractGeminiConfigError(helpOutput)
+  const supportsProxyBaseUrl = version ? compareSemver(version, GEMINI_PROXY_MIN_VERSION) >= 0 : false
+
+  return {
+    installed: true,
+    version,
+    supportsProxyBaseUrl,
+    configError,
+    reason: supportsProxyBaseUrl
+      ? null
+      : `Gemini CLI ${version || '(unknown version)'} does not expose stable custom base URL support for proxy mode yet.`,
+  }
 }
 
 function spawnCommand(command, args, env) {
@@ -347,6 +501,10 @@ function printConfigResult(toolName, result) {
   if (result.backupPath) console.log(chalk.dim(`  💾 Backup: ${result.backupPath}`))
 }
 
+function printExperimentalProxyNote() {
+  console.log(chalk.dim(`  ${EXPERIMENTAL_PROXY_TOOLS_NOTE}`))
+}
+
 export async function startExternalTool(mode, model, config) {
   const meta = getToolMeta(mode)
   const { env, apiKey, baseUrl } = buildToolEnv(mode, model, config)
@@ -429,6 +587,7 @@ export async function startExternalTool(mode, model, config) {
       console.log()
       console.log(chalk.yellow('  The proxy translates between provider protocols and handles key rotation,'))
       console.log(chalk.yellow('  which is required for this tool to connect.'))
+      console.log(chalk.dim(`  ${EXPERIMENTAL_PROXY_TOOLS_NOTE}`))
       console.log()
       console.log(chalk.white('  To enable it:'))
       console.log(chalk.dim('    1. Press ') + chalk.bold.white('J') + chalk.dim(' to open FCM Proxy V2 settings'))
@@ -441,33 +600,71 @@ export async function startExternalTool(mode, model, config) {
 
   if (mode === 'claude-code') {
     // 📖 Claude Code needs Anthropic-compatible wire format (POST /v1/messages).
-    // 📖 The FCM proxy natively translates Anthropic ↔ OpenAI.
+    // 📖 Mirror free-claude-code: one auth env only (`ANTHROPIC_AUTH_TOKEN`) plus base URL.
     const started = await ensureProxyRunning(config)
+    const { env: proxyEnv } = buildToolEnv(mode, model, config, {
+      sanitize: true,
+      includeCompatDefaults: false,
+      includeProviderEnv: false,
+    })
     const proxyBase = `http://127.0.0.1:${started.port}`
-    env.ANTHROPIC_BASE_URL = proxyBase
-    env.ANTHROPIC_API_KEY = started.proxyToken
     const launchModelId = resolveLauncherModelId(model, true)
+    proxyEnv.ANTHROPIC_BASE_URL = proxyBase
+    proxyEnv.ANTHROPIC_AUTH_TOKEN = started.proxyToken
+    proxyEnv.ANTHROPIC_MODEL = launchModelId
     console.log(chalk.dim(`  📖 Claude Code routed through FCM proxy on :${started.port} (Anthropic translation enabled)`))
-    return spawnCommand('claude', ['--model', launchModelId], env)
+    return spawnCommand('claude', ['--model', launchModelId], proxyEnv)
   }
 
   if (mode === 'codex') {
     const started = await ensureProxyRunning(config)
-    env.OPENAI_API_KEY = started.proxyToken
-    env.OPENAI_BASE_URL = `http://127.0.0.1:${started.port}/v1`
+    const { env: proxyEnv } = buildToolEnv(mode, model, config, {
+      sanitize: true,
+      includeCompatDefaults: false,
+      includeProviderEnv: false,
+    })
     const launchModelId = resolveLauncherModelId(model, true)
+    const proxyBaseUrl = `http://127.0.0.1:${started.port}/v1`
+    proxyEnv.FCM_PROXY_API_KEY = started.proxyToken
     console.log(chalk.dim(`  📖 Codex routed through FCM proxy on :${started.port}`))
-    return spawnCommand('codex', ['--model', launchModelId], env)
+    return spawnCommand('codex', [...buildCodexProxyArgs(proxyBaseUrl), '--model', launchModelId], proxyEnv)
   }
 
   if (mode === 'gemini') {
+    const geminiSupport = inspectGeminiCliSupport()
+    if (geminiSupport.configError) {
+      console.log()
+      console.log(chalk.red('  ✖ Gemini CLI configuration is invalid, so the proxy launch is blocked before auth.'))
+      console.log(chalk.dim(`  ${geminiSupport.configError.split('\n').join('\n  ')}`))
+      printExperimentalProxyNote()
+      console.log(chalk.dim('  Fix ~/.gemini/settings.json, then try again.'))
+      console.log()
+      return 1
+    }
+    if (!geminiSupport.supportsProxyBaseUrl) {
+      console.log()
+      const versionLabel = geminiSupport.version ? `v${geminiSupport.version}` : 'this installed version'
+      console.log(chalk.red(`  ✖ Gemini CLI ${versionLabel} is not proxy-compatible in FCM yet.`))
+      console.log(chalk.yellow('  This build does not expose the custom base-URL contract we need, so launching it through the proxy would be misleading.'))
+      printExperimentalProxyNote()
+      console.log(chalk.dim(`  Expected: Gemini CLI ${GEMINI_PROXY_MIN_VERSION}+ with stable proxy base URL support.`))
+      console.log()
+      return 1
+    }
+
     const started = await ensureProxyRunning(config)
-    env.OPENAI_API_KEY = started.proxyToken
-    env.OPENAI_BASE_URL = `http://127.0.0.1:${started.port}/v1`
     const launchModelId = resolveLauncherModelId(model, true)
+    const { env: proxyEnv } = buildToolEnv(mode, model, config, {
+      sanitize: true,
+      includeCompatDefaults: false,
+      includeProviderEnv: false,
+    })
+    proxyEnv.GEMINI_API_KEY = started.proxyToken
+    proxyEnv.GOOGLE_API_KEY = started.proxyToken
+    proxyEnv.GOOGLE_GEMINI_BASE_URL = `http://127.0.0.1:${started.port}/v1`
     printConfigResult(meta.label, writeGeminiConfig({ ...model, modelId: launchModelId }))
     console.log(chalk.dim(`  📖 Gemini routed through FCM proxy on :${started.port}`))
-    return spawnCommand('gemini', ['--model', launchModelId], env)
+    return spawnCommand('gemini', ['--model', launchModelId], proxyEnv)
   }
 
   if (mode === 'qwen') {

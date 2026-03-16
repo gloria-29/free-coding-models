@@ -10,8 +10,8 @@
  *
  *   📖 Key J opens the FCM Proxy V2 overlay directly (with daemon status refresh).
  *   📖 Key I opens the unified "Feedback, bugs & requests" overlay.
- *   📖 The proxy overlay handles tool cycling (ROW_PROXY_TOOL), sync toggle, cleanup
- *       for any syncable tool via cleanupToolConfig(), and all daemon management actions.
+ *   📖 The proxy overlay handles sync toggle and cleanup for the current Z-selected tool,
+ *       plus all daemon management actions.
  *
  *   It also owns the "test key" model selection used by the Settings overlay.
  *   Some providers expose models in `/v1/models` that are not actually callable
@@ -31,6 +31,7 @@
  */
 
 import { loadChangelog } from './changelog-loader.js'
+import { resolveProxySyncToolMode } from './proxy-sync.js'
 
 // 📖 Some providers need an explicit probe model because the first catalog entry
 // 📖 is not guaranteed to be accepted by their chat endpoint.
@@ -1284,15 +1285,14 @@ export function createKeyHandler(ctx) {
     if (state.proxyDaemonOpen) {
       const proxySettings = getProxySettings(state.config)
       const ROW_PROXY_ENABLED = 0
-      const ROW_PROXY_TOOL = 1
-      const ROW_PROXY_SYNC = 2
-      const ROW_PROXY_PORT = 3
-      const ROW_PROXY_CLEANUP = 4
-      const ROW_DAEMON_INSTALL = 5
-      const ROW_DAEMON_RESTART = 6
-      const ROW_DAEMON_STOP = 7
-      const ROW_DAEMON_KILL = 8
-      const ROW_DAEMON_LOGS = 9
+      const ROW_PROXY_SYNC = 1
+      const ROW_PROXY_PORT = 2
+      const ROW_PROXY_CLEANUP = 3
+      const ROW_DAEMON_INSTALL = 4
+      const ROW_DAEMON_RESTART = 5
+      const ROW_DAEMON_STOP = 6
+      const ROW_DAEMON_KILL = 7
+      const ROW_DAEMON_LOGS = 8
 
       const daemonStatus = state.daemonStatus || 'not-installed'
       const daemonIsInstalled = daemonStatus === 'running' || daemonStatus === 'stopped' || daemonStatus === 'unhealthy' || daemonStatus === 'stale'
@@ -1340,8 +1340,9 @@ export function createKeyHandler(ctx) {
       if (key.name === 'pageup') { state.proxyDaemonCursor = Math.max(0, state.proxyDaemonCursor - 5); return }
       if (key.name === 'pagedown') { state.proxyDaemonCursor = Math.min(maxRow, state.proxyDaemonCursor + 5); return }
 
-      // 📖 Resolve active proxy tool (persisted or fallback to Z-mode)
-      const activeProxyTool = proxySettings.activeTool || state.mode || 'opencode'
+      // 📖 Proxy sync now follows the current Z-selected tool automatically.
+      const currentToolMode = state.mode || 'opencode'
+      const currentProxyTool = resolveProxySyncToolMode(currentToolMode)
 
       // 📖 Space toggles on proxy rows
       if (key.name === 'space') {
@@ -1352,33 +1353,21 @@ export function createKeyHandler(ctx) {
           state.proxyDaemonMessage = { type: 'success', msg: `✅ Proxy mode ${state.config.settings.proxy.enabled ? 'enabled' : 'disabled'}`, ts: Date.now() }
           return
         }
-        if (state.proxyDaemonCursor === ROW_PROXY_TOOL) {
-          // 📖 Space also cycles tool (same as Enter on this row)
-        } else if (state.proxyDaemonCursor === ROW_PROXY_SYNC) {
+        if (state.proxyDaemonCursor === ROW_PROXY_SYNC) {
+          if (!currentProxyTool) {
+            state.proxyDaemonMessage = { type: 'warning', msg: '⚠ Current tool does not support persisted proxy sync', ts: Date.now() }
+            return
+          }
           if (!state.config.settings) state.config.settings = {}
           state.config.settings.proxy = { ...proxySettings, syncToOpenCode: !proxySettings.syncToOpenCode }
           saveConfig(state.config)
           const { getToolMeta } = await import('./tool-metadata.js')
-          const toolLabel = getToolMeta(activeProxyTool).label
+          const toolLabel = getToolMeta(currentProxyTool).label
           state.proxyDaemonMessage = { type: 'success', msg: `✅ Auto-sync to ${toolLabel} ${state.config.settings.proxy.syncToOpenCode ? 'enabled' : 'disabled'}`, ts: Date.now() }
           return
         } else {
           return
         }
-      }
-
-      // 📖 Enter or Space on ROW_PROXY_TOOL → cycle active tool
-      if ((key.name === 'return' || key.name === 'space') && state.proxyDaemonCursor === ROW_PROXY_TOOL) {
-        const { PROXY_SYNCABLE_TOOLS } = await import('./proxy-sync.js')
-        const currentIdx = PROXY_SYNCABLE_TOOLS.indexOf(activeProxyTool)
-        const nextIdx = (currentIdx + 1) % PROXY_SYNCABLE_TOOLS.length
-        const nextTool = PROXY_SYNCABLE_TOOLS[nextIdx]
-        if (!state.config.settings) state.config.settings = {}
-        state.config.settings.proxy = { ...proxySettings, activeTool: nextTool }
-        saveConfig(state.config)
-        const { getToolMeta } = await import('./tool-metadata.js')
-        state.proxyDaemonMessage = { type: 'success', msg: `✅ Active tool: ${getToolMeta(nextTool).emoji} ${getToolMeta(nextTool).label}`, ts: Date.now() }
-        return
       }
 
       // 📖 Enter on proxy rows
@@ -1394,11 +1383,15 @@ export function createKeyHandler(ctx) {
 
         // 📖 Auto-sync toggle
         if (state.proxyDaemonCursor === ROW_PROXY_SYNC) {
+          if (!currentProxyTool) {
+            state.proxyDaemonMessage = { type: 'warning', msg: '⚠ Current tool does not support persisted proxy sync', ts: Date.now() }
+            return
+          }
           if (!state.config.settings) state.config.settings = {}
           state.config.settings.proxy = { ...proxySettings, syncToOpenCode: !proxySettings.syncToOpenCode }
           saveConfig(state.config)
           const { getToolMeta } = await import('./tool-metadata.js')
-          const toolLabel = getToolMeta(activeProxyTool).label
+          const toolLabel = getToolMeta(currentProxyTool).label
           state.proxyDaemonMessage = { type: 'success', msg: `✅ Auto-sync to ${toolLabel} ${state.config.settings.proxy.syncToOpenCode ? 'enabled' : 'disabled'}`, ts: Date.now() }
           return
         }
@@ -1412,9 +1405,13 @@ export function createKeyHandler(ctx) {
 
         // 📖 Clean proxy config — generalized for active tool
         if (state.proxyDaemonCursor === ROW_PROXY_CLEANUP) {
-          const result = cleanupToolConfig(activeProxyTool)
+          if (!currentProxyTool) {
+            state.proxyDaemonMessage = { type: 'warning', msg: '⚠ Current tool has no persisted proxy config to clean', ts: Date.now() }
+            return
+          }
+          const result = cleanupToolConfig(currentProxyTool)
           const { getToolMeta } = await import('./tool-metadata.js')
-          const toolLabel = getToolMeta(activeProxyTool).label
+          const toolLabel = getToolMeta(currentProxyTool).label
           if (result.success) {
             state.proxyDaemonMessage = { type: 'success', msg: `✅ ${toolLabel} proxy config cleaned — all fcm-* entries removed`, ts: Date.now() }
           } else {

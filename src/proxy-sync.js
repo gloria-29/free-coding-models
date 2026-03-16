@@ -14,9 +14,10 @@
  * @functions
  *   → syncProxyToTool(toolMode, proxyInfo, mergedModels) — write proxy endpoint to tool config
  *   → cleanupToolConfig(toolMode) — remove all FCM entries from tool config
+ *   → resolveProxySyncToolMode(toolMode) — normalize a live tool mode to a proxy-syncable target
  *   → getProxySyncableTools() — list of tools that support proxy sync
  *
- * @exports syncProxyToTool, cleanupToolConfig, getProxySyncableTools, PROXY_SYNCABLE_TOOLS
+ * @exports syncProxyToTool, cleanupToolConfig, resolveProxySyncToolMode, getProxySyncableTools, PROXY_SYNCABLE_TOOLS
  *
  * @see src/endpoint-installer.js — per-provider direct install (Y key flow)
  * @see src/opencode-sync.js — OpenCode-specific sync (used internally by this module)
@@ -37,6 +38,8 @@ export const PROXY_SYNCABLE_TOOLS = [
   'opencode', 'opencode-desktop', 'openclaw', 'crush', 'goose', 'pi',
   'aider', 'amp', 'qwen', 'claude-code', 'codex', 'openhands',
 ]
+
+const PROXY_SYNCABLE_CANONICAL = new Set(PROXY_SYNCABLE_TOOLS.map(tool => tool === 'opencode-desktop' ? 'opencode' : tool))
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 
@@ -118,6 +121,12 @@ function parseContextWindow(ctx) {
 
 function getDefaultMaxTokens(contextWindow) {
   return Math.max(4096, Math.min(contextWindow, 32768))
+}
+
+export function resolveProxySyncToolMode(toolMode) {
+  if (typeof toolMode !== 'string' || toolMode.length === 0) return null
+  const canonical = toolMode === 'opencode-desktop' ? 'opencode' : toolMode
+  return PROXY_SYNCABLE_CANONICAL.has(canonical) ? canonical : null
 }
 
 // ─── Per-tool sync functions ─────────────────────────────────────────────────
@@ -358,8 +367,8 @@ function syncEnvTool(proxyInfo, mergedModels, toolMode) {
  * @returns {{ success: boolean, path?: string, modelCount?: number, error?: string }}
  */
 export function syncProxyToTool(toolMode, proxyInfo, mergedModels) {
-  const canonical = toolMode === 'opencode-desktop' ? 'opencode' : toolMode
-  if (!PROXY_SYNCABLE_TOOLS.includes(toolMode) && !PROXY_SYNCABLE_TOOLS.includes(canonical)) {
+  const canonical = resolveProxySyncToolMode(toolMode)
+  if (!canonical) {
     return { success: false, error: `Tool '${toolMode}' does not support proxy sync` }
   }
 
@@ -415,7 +424,10 @@ export function syncProxyToTool(toolMode, proxyInfo, mergedModels) {
  * @returns {{ success: boolean, error?: string }}
  */
 export function cleanupToolConfig(toolMode) {
-  const canonical = toolMode === 'opencode-desktop' ? 'opencode' : toolMode
+  const canonical = resolveProxySyncToolMode(toolMode)
+  if (!canonical) {
+    return { success: false, error: `Tool '${toolMode}' does not support proxy cleanup` }
+  }
 
   try {
     const paths = getDefaultPaths()

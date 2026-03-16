@@ -46,6 +46,9 @@ By Vanessa Depraute
   <sub>Ping free coding models from 20 providers in real-time — pick the best one for OpenCode, OpenClaw, or any AI coding assistant</sub>
 </p>
 
+> ⚠️ **Beta notice**  
+> FCM Proxy V2 support for external tools is still in beta. Claude Code, Codex, Gemini, and the other proxy-backed launchers already work in many setups, but auth and startup edge cases can still fail while the integration stabilizes.
+
 <p align="center">
   <img src="demo.gif" alt="free-coding-models demo" width="100%">
 </p>
@@ -87,7 +90,7 @@ By Vanessa Depraute
 - **💻 OpenCode integration** — Auto-detects NIM setup, sets model as default, launches OpenCode
 - **🦞 OpenClaw integration** — Sets selected model as default provider in `~/.openclaw/openclaw.json`
 - **🧰 Public tool launchers** — `Enter` auto-configures and launches 10+ tools: `OpenCode CLI`, `OpenCode Desktop`, `OpenClaw`, `Crush`, `Goose`, `Aider`, `Claude Code`, `Codex`, `Gemini`, `Qwen`, `OpenHands`, `Amp`, and `Pi`. All tools auto-select the chosen model on launch.
-- **🔌 Install Endpoints flow** — Press `Y` to install one configured provider into any of the 13 supported tools, with a choice between **Direct Provider** (pure API) or **FCM Proxy V2** (key rotation + usage tracking), then pick all models or a curated subset
+- **🔌 Install Endpoints flow** — Press `Y` to install one configured provider into the compatible persisted-config tools, with a choice between **Direct Provider** (pure API) or **FCM Proxy V2** (key rotation + usage tracking), then pick all models or a curated subset
 - **📝 Feature Request (J key)** — Send anonymous feedback directly to the project team
 - **🐛 Bug Report (I key)** — Send anonymous bug reports directly to the project team
  - **🎨 Clean output** — Zero scrollback pollution, interface stays open until Ctrl+C
@@ -179,15 +182,13 @@ bunx free-coding-models YOUR_API_KEY
 
 ### 🆕 What's New
 
-**Version 0.2.6 brings powerful new features:**
+**Version 0.3.1 tightens the proxy/tooling path and ships the missing diagnostics:**
 
-- **`--json` flag** — Output model results as JSON for scripting, CI/CD pipelines, and monitoring dashboards. Perfect for automation: `free-coding-models --tier S --json | jq '.[0].modelId'`
-
-- **Persistent ping cache** — Results are cached for 5 minutes between runs. Startup is nearly instant when cache is fresh, and you save API rate limits. Cache file: `~/.free-coding-models.cache.json`
-
-- **Config security check** — Automatically warns if your API key config file has insecure permissions and offers one-click auto-fix with `chmod 600`
-
-- **Provider colors everywhere** — Provider names are now colored consistently in logs, settings, and the main table for better visual recognition
+- **Claude Code proxy launches are cleaner** — FCM now launches Claude Code with an Anthropic-only proxy contract (`ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`) instead of mixing auth modes.
+- **Codex proxy launches now use the right API path** — Codex is forced into an explicit custom provider config and the proxy now implements `POST /v1/responses`.
+- **Gemini proxy launches fail fast when unsupported** — Older Gemini CLI builds and invalid local config are detected up front, with a clear message instead of a misleading broken launch.
+- **Proxy auto-sync follows the current tool** — The FCM Proxy V2 overlay no longer relies on a separate active-tool picker, and `Y` now lists only stable persisted-config install targets.
+- **Beta messaging is explicit** — The README and runtime launcher diagnostics now call out that proxy-backed external tool support is still stabilizing.
 
 ---
 
@@ -216,10 +217,13 @@ free-coding-models --best
  # Analyze for 10 seconds and output the most reliable model
  free-coding-models --fiable
 
- # Output results as JSON (for scripting/automation)
+# Output results as JSON (for scripting/automation)
 free-coding-models --json
 free-coding-models --tier S --json | jq '.[0].modelId'  # Get fastest S-tier model ID
 free-coding-models --json | jq '.[] | select(.avgPing < 500)'  # Filter by latency
+
+# Print the complete CLI help with every supported flag and daemon command
+free-coding-models --help
 
  # Filter models by tier letter
 free-coding-models --tier S          # S+ and S only
@@ -315,6 +319,7 @@ Press **`P`** to open the Settings screen at any time:
  Keys are saved to `~/.free-coding-models.json` (permissions `0600`).
 
  Manual update is in the same Settings screen (`P`) under **Maintenance** (Enter to check, Enter again to install when an update is available).
+ When a newer npm release is known, the main footer also adds a full-width red warning line with the manual recovery command `npm install -g free-coding-models@latest`.
  Favorites are also persisted in the same config file and survive restarts.
  The main table now starts in `Configured Only` mode, so if nothing is set up yet you can press `P` and add your first API key immediately.
 
@@ -601,9 +606,9 @@ free-coding-models daemon logs        # Show recent service logs
 
 The dedicated **FCM Proxy V2** overlay (accessible via `J` from main TUI, or Settings → Enter) provides full control:
 
-- **Active tool selector** — Choose which AI coding tool receives proxy config (cycles through all 12 syncable tools)
-- **Auto-sync toggle** — Automatically write the `fcm-proxy` provider to the active tool's config when the proxy starts
-- **Cleanup** — Remove `fcm-proxy` entries from the active tool's config (works for any syncable tool)
+- **Current tool hint** — Shows which Z-selected tool will receive persisted proxy config (when that mode supports it)
+- **Auto-sync toggle** — Automatically write the `fcm-proxy` provider to the current tool's config when the proxy starts
+- **Cleanup** — Remove `fcm-proxy` entries from the current tool's config
 - **Status display** — Running/Stopped/Stale/Unhealthy with PID, port, uptime, account/model counts
 - **Version mismatch detection** — warns if service version differs from installed FCM version
 - **Restart** — stop + start via the OS service manager
@@ -627,7 +632,7 @@ The dedicated **FCM Proxy V2** overlay (accessible via `J` from main TUI, or Set
 | `~/.free-coding-models/daemon.json` | Status file (PID, port, token) — written by the background service |
 | `~/.free-coding-models/daemon-stdout.log` | Service output log |
 
-The `proxy.activeTool` field in the config file tracks which tool the proxy auto-syncs to (e.g. `"opencode"`, `"aider"`, `"claude-code"`).
+The `proxy.activeTool` field is now legacy-only. FCM Proxy V2 follows the current **Z-selected** tool automatically whenever that mode supports persisted proxy sync.
 
 ### Cleanup
 
@@ -680,7 +685,11 @@ Press **Z** to cycle through all 13 tool modes in the TUI, or use flags to start
 
 ⚡ = Requires FCM Proxy V2 background service (press `J` to enable). These tools cannot connect to free providers without the proxy.
 
-All tools are also available as install targets in the **Install Endpoints** flow (`Y` key) — install an entire provider catalog into any tool with one flow, choosing between Direct Provider or FCM Proxy V2 connection.
+Proxy-backed external tool support is still beta. Expect occasional launch/auth rough edges while third-party CLI contracts are still settling.
+
+`Codex` is launched through an explicit custom provider config so it stays in API-key mode through the proxy. `Gemini` proxy launches are version-gated: older builds like `0.33.0` are blocked with a clear diagnostic instead of being misconfigured silently.
+
+The **Install Endpoints** flow (`Y` key) now targets only the tools with a stable persisted config contract. `Claude Code`, `Codex`, and `Gemini` stay launcher-only and should be started directly from FCM.
 
 ---
 
@@ -979,7 +988,7 @@ This script:
 | `--tier C` | Show only C tier models |
 | `--profile <name>` | Load a saved config profile on startup |
 | `--recommend` | Auto-open Smart Recommend overlay on start |
-| `--clean-proxy` | Remove persisted `fcm-proxy` config from the active tool |
+| `--clean-proxy` | Remove persisted `fcm-proxy` config from OpenCode |
 
 **Keyboard shortcuts (main TUI):**
 - **↑↓** — Navigate models
@@ -1011,9 +1020,9 @@ Pressing **K** now shows a full in-app reference: main hotkeys, settings hotkeys
 `Y` opens a dedicated install flow for configured providers. The 5-step flow is:
 
 1. **Provider** — Pick one provider that already has an API key in Settings
-2. **Tool** — Pick the target tool from all 13 supported tools:
-   - Config-based: `OpenCode CLI`, `OpenCode Desktop`, `OpenClaw`, `Crush`, `Goose`, `Pi`, `Aider`, `Amp`, `Gemini`, `Qwen`
-   - Env-file based: `Claude Code`, `Codex CLI`, `OpenHands` (writes `~/.fcm-{tool}-env` — source it before launching)
+2. **Tool** — Pick the target tool from the compatible install targets:
+   - Config-based: `OpenCode CLI`, `OpenCode Desktop`, `OpenClaw`, `Crush`, `Goose`, `Pi`, `Aider`, `Amp`, `Qwen`
+   - Env-file based: `OpenHands` (writes `~/.fcm-openhands-env` — source it before launching)
 3. **Connection Mode** — Choose how the tool connects to the provider:
    - **⚡ Direct Provider** — pure API connection, no proxy involved
    - **🔄 FCM Proxy V2** — route through FCM Proxy V2 with key rotation and usage tracking
@@ -1026,7 +1035,8 @@ Important behavior:
 - `Install all models` is the recommended path because FCM can refresh that catalog automatically on later launches when the provider model list changes
 - `Install selected models only` is useful when you want a smaller curated picker inside the target tool
 - `OpenCode CLI` and `OpenCode Desktop` share the same `opencode.json`, so the managed provider appears in both
-- For env-based tools (Claude Code, Codex, OpenHands), FCM writes a sourceable file at `~/.fcm-{tool}-env` — run `source ~/.fcm-claude-code-env` before launching
+- `Claude Code`, `Codex`, and `Gemini` are launcher-only in this flow for now. Use the normal `Enter` launcher path so FCM can apply the right proxy/runtime contract automatically.
+- For env-based install targets like `OpenHands`, FCM writes a sourceable helper file at `~/.fcm-{tool}-env`
 
  **Keyboard shortcuts (Settings screen — `P` key):**
  - **↑↓** — Navigate providers, maintenance row, and profile rows

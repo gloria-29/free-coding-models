@@ -78,7 +78,11 @@
  *   - --best: Show only top-tier models (A+, S, S+)
  *   - --fiable: Analyze 10s and output the most reliable model
  *   - --json: Output results as JSON (for scripting/automation)
+ *   - --recommend: Open Smart Recommend immediately on startup
+ *   - --profile <name>: Load a saved config profile before entering the TUI
+ *   - --clean-proxy / --proxy-clean: Remove persisted fcm-proxy config from OpenCode
  *   - --no-telemetry: Disable anonymous usage analytics for this run
+ *   - --help / -h: Print the full CLI help and exit
  *   - --tier S/A/B/C: Filter models by tier letter (S=S+/S, A=A+/A/A-, B=B+/B, C=C)
  *
  *   @see {@link https://build.nvidia.com} NVIDIA API key generation
@@ -125,6 +129,7 @@ import { startExternalTool } from '../src/tool-launchers.js'
 import { getConfiguredInstallableProviders, installProviderEndpoints, refreshInstalledEndpoints, getInstallTargetModes, getProviderCatalogModels, CONNECTION_MODES } from '../src/endpoint-installer.js'
 import { loadCache, saveCache, clearCache, getCacheAge } from '../src/cache.js'
 import { checkConfigSecurity } from '../src/security.js'
+import { buildCliHelpText } from '../src/cli-help.js'
 
 // 📖 mergedModels: cross-provider grouped model list (one entry per label, N providers each)
 // 📖 mergedModelByLabel: fast lookup map from display label → merged model entry
@@ -173,6 +178,13 @@ const LOCAL_VERSION = pkg.version
 
 async function main() {
   const cliArgs = parseArgs(process.argv)
+
+  if (cliArgs.helpMode) {
+    console.log()
+    console.log(buildCliHelpText({ chalk, title: 'free-coding-models' }))
+    console.log()
+    process.exit(0)
+  }
 
   // Validate --tier early, before entering alternate screen
   if (cliArgs.tierFilter && !TIER_LETTER_MAP[cliArgs.tierFilter]) {
@@ -341,13 +353,9 @@ async function main() {
   // 📖 If a new version is available, show an interactive prompt (Update / Changelogs / Skip).
   // 📖 Dev mode (git checkout) skips auto-update to avoid infinite relaunch loops.
   let latestVersion = null
-  let isOutdated = false
   const isDevMode = existsSync(join(dirname(fileURLToPath(import.meta.url)), '..', '.git'))
   try {
     latestVersion = await checkForUpdate()
-    if (!latestVersion && config.settings?.updateCheckFailures >= 3) {
-      isOutdated = true
-    }
     // 📖 Reset failure counter on successful check
     if (config.settings?.updateCheckFailures) {
       config.settings.updateCheckFailures = 0
@@ -357,7 +365,6 @@ async function main() {
     const failures = (config.settings?.updateCheckFailures || 0) + 1
     if (!config.settings) config.settings = {}
     config.settings.updateCheckFailures = Math.min(failures, 3)
-    if (failures >= 3) isOutdated = true
     saveConfig(config)
   }
 
@@ -472,8 +479,8 @@ async function main() {
     lastPingTime: now,            // 📖 Track when last ping cycle started
     lastUserActivityAt: now,      // 📖 Any keypress refreshes this timer; inactivity can force slow mode.
     resumeSpeedOnActivity: false, // 📖 Set after idle slowdown so the next activity restarts a 60s speed burst.
-    latestVersion,                // 📖 Latest npm version available (null if none or check failed)
-    isOutdated,                   // 📖 Set to true if update check failed 3+ times (show red "OUTDATED" footer)
+    startupLatestVersion: latestVersion, // 📖 Startup auto-check result reused by the footer banner after "skip update".
+    versionAlertsEnabled: !isDevMode, // 📖 Dev checkouts should not tell contributors to upgrade the global npm package.
     mode,                         // 📖 'opencode' or 'openclaw' — controls Enter action
     tierFilterMode: 0,            // 📖 Index into TIER_CYCLE (0=All, 1=S+, 2=S, ...)
     originFilterMode: 0,          // 📖 Index into ORIGIN_CYCLE (0=All, then providers)
@@ -630,11 +637,9 @@ async function main() {
     }
   }
 
-  // 📖 Auto-start proxy on launch if OpenCode config already has an fcm-proxy provider.
+  // 📖 Auto-start proxy on launch when proxy auto-sync is enabled for the current tool.
   // 📖 Fire-and-forget: does not block UI startup. state.proxyStartupStatus is updated async.
-  if (mode === 'opencode' || mode === 'opencode-desktop') {
-    void autoStartProxyIfSynced(config, state)
-  }
+  void autoStartProxyIfSynced(config, state)
 
   // 📖 Load cache if available (for faster startup with cached ping results)
   const cached = loadCache()
@@ -912,7 +917,7 @@ async function main() {
                 ? overlays.renderLog()
               : state.changelogOpen
                 ? overlays.renderChangelog()
-                : renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer, state.proxyStartupStatus, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, getProxySettings(state.config).enabled === true, state.isOutdated, state.latestVersion)
+                : renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer, state.proxyStartupStatus, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, getProxySettings(state.config).enabled === true, state.startupLatestVersion, state.versionAlertsEnabled)
     process.stdout.write(ALT_HOME + content)
   }, Math.round(1000 / FPS))
 
@@ -920,7 +925,7 @@ async function main() {
   const initialVisible = state.results.filter(r => !r.hidden)
   state.visibleSorted = sortResultsWithPinnedFavorites(initialVisible, state.sortColumn, state.sortDirection)
 
-  process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer, state.proxyStartupStatus, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, getProxySettings(state.config).enabled === true, state.isOutdated, state.latestVersion))
+  process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer, state.proxyStartupStatus, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, getProxySettings(state.config).enabled === true, state.startupLatestVersion, state.versionAlertsEnabled))
 
   // 📖 If --recommend was passed, auto-open the Smart Recommend overlay on start
   if (cliArgs.recommendMode) {

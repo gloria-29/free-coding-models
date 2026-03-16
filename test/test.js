@@ -48,9 +48,11 @@ import { createOverlayRenderers } from '../src/overlays.js'
 import { buildProviderModelsUrl, parseProviderModelIds, listProviderTestModels, classifyProviderTestOutcome, buildProviderTestDetail } from '../src/key-handler.js'
 import { buildMergedModels } from '../src/model-merger.js'
 import { setOpenCodeModelData } from '../src/opencode.js'
-import { resolveLauncherModelId } from '../src/tool-launchers.js'
+import { resolveProxySyncToolMode } from '../src/proxy-sync.js'
+import { buildCliHelpText } from '../src/cli-help.js'
+import { buildCodexProxyArgs, buildToolEnv, extractGeminiConfigError, resolveLauncherModelId } from '../src/tool-launchers.js'
 import { parseLogLine } from '../src/log-reader.js'
-import { getConfiguredInstallableProviders, installProviderEndpoints } from '../src/endpoint-installer.js'
+import { getConfiguredInstallableProviders, getInstallTargetModes, installProviderEndpoints } from '../src/endpoint-installer.js'
 
 // ─── Helper: create a mock model result ──────────────────────────────────────
 // 📖 Builds a minimal result object matching the shape used by the main script
@@ -769,6 +771,99 @@ describe('renderTable health labels', () => {
   })
 })
 
+describe('renderTable outdated footer banner', () => {
+  it('renders a dedicated update banner when startup auto-check already found a newer version', () => {
+    const results = [
+      mockResult({ providerKey: 'nvidia', totalTokens: 0 }),
+    ]
+    const { version: localVersion } = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+    const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const output = renderTable(
+      results,
+      0,
+      0,
+      null,
+      'avg',
+      'asc',
+      10_000,
+      Date.now(),
+      'opencode',
+      0,
+      0,
+      20,
+      190,
+      0,
+      null,
+      false,
+      '',
+      null,
+      'normal',
+      'auto',
+      false,
+      null,
+      false,
+      0,
+      'idle',
+      null,
+      false,
+      '9.9.9',
+      true
+    )
+
+    assert.match(output, new RegExp(`Update available: v${escapeRegex(localVersion)} -> v9\\.9\\.9`))
+    assert.match(output, /npm install -g free-coding-models@latest/)
+    assert.match(output, /Ctrl\+C Exit\x1B\[K\n  ⚠ Update available:/)
+  })
+
+  it('stays quiet when no newer version is known', () => {
+    const results = [
+      mockResult({ providerKey: 'nvidia', totalTokens: 0 }),
+    ]
+    const output = renderTable(results, 0, 0, null, 'avg', 'asc', 10_000, Date.now(), 'opencode', 0, 0, 20, 190)
+
+    assert.doesNotMatch(output, /Update available:/)
+  })
+
+  it('stays quiet in dev-mode render paths even if npm has a newer published version', () => {
+    const results = [
+      mockResult({ providerKey: 'nvidia', totalTokens: 0 }),
+    ]
+    const output = renderTable(
+      results,
+      0,
+      0,
+      null,
+      'avg',
+      'asc',
+      10_000,
+      Date.now(),
+      'opencode',
+      0,
+      0,
+      20,
+      190,
+      0,
+      null,
+      false,
+      '',
+      null,
+      'normal',
+      'auto',
+      false,
+      null,
+      false,
+      0,
+      'idle',
+      null,
+      false,
+      '9.9.9',
+      false
+    )
+
+    assert.doesNotMatch(output, /Update available:/)
+  })
+})
+
 describe('renderSettings provider test badges', () => {
   function buildSettingsRenderer(config) {
     const state = {
@@ -981,6 +1076,12 @@ describe('parseArgs', () => {
     assert.equal(parseArgs(argv()).noTelemetry, false)
   })
 
+  it('detects --help and -h flags', () => {
+    assert.equal(parseArgs(argv('--help')).helpMode, true)
+    assert.equal(parseArgs(argv('-h')).helpMode, true)
+    assert.equal(parseArgs(argv()).helpMode, false)
+  })
+
   it('parses --tier value', () => {
     assert.equal(parseArgs(argv('--tier', 'S')).tierFilter, 'S')
     assert.equal(parseArgs(argv('--tier', 'a')).tierFilter, 'A') // 📖 uppercased
@@ -1007,6 +1108,46 @@ describe('parseArgs', () => {
   it('flags are case-insensitive', () => {
     assert.equal(parseArgs(argv('--BEST')).bestMode, true)
     assert.equal(parseArgs(argv('--OpenCode')).openCodeMode, true)
+    assert.equal(parseArgs(argv('--HELP')).helpMode, true)
+  })
+})
+
+describe('cli help text', () => {
+  it('lists all supported CLI flags and daemon commands', () => {
+    const help = buildCliHelpText()
+    const expectedEntries = [
+      '--opencode',
+      '--opencode-desktop',
+      '--openclaw',
+      '--crush',
+      '--goose',
+      '--pi',
+      '--aider',
+      '--claude-code',
+      '--codex',
+      '--gemini',
+      '--qwen',
+      '--openhands',
+      '--amp',
+      '--best',
+      '--fiable',
+      '--json',
+      '--tier <S|A|B|C>',
+      '--recommend',
+      '--profile <name>',
+      '--no-telemetry',
+      '--clean-proxy, --proxy-clean',
+      '--help, -h',
+      'daemon status',
+      'daemon install',
+      'daemon uninstall',
+      'daemon restart',
+      'daemon logs',
+    ]
+
+    for (const entry of expectedEntries) {
+      assert.match(help, new RegExp(entry.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    }
   })
 })
 
@@ -1640,7 +1781,71 @@ describe('proxy launcher model ids', () => {
   })
 })
 
+describe('tool launcher env building', () => {
+  it('sanitizes conflicting Anthropic/OpenAI vars for Claude proxy launches', () => {
+    const config = { apiKeys: { nvidia: 'nvapi-test' } }
+    const model = { providerKey: 'nvidia', modelId: 'openai/gpt-oss-120b' }
+    const inheritedEnv = {
+      ANTHROPIC_API_KEY: 'stale-api-key',
+      ANTHROPIC_AUTH_TOKEN: 'stale-auth-token',
+      OPENAI_API_KEY: 'stale-openai-key',
+      OPENAI_BASE_URL: 'https://old.example/v1',
+      PATH: process.env.PATH || '',
+    }
+
+    const { env } = buildToolEnv('claude-code', model, config, {
+      sanitize: true,
+      includeCompatDefaults: false,
+      includeProviderEnv: false,
+      inheritedEnv,
+    })
+
+    assert.equal(env.ANTHROPIC_API_KEY, undefined)
+    assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'nvapi-test')
+    assert.equal(env.OPENAI_API_KEY, undefined)
+    assert.equal(env.OPENAI_BASE_URL, undefined)
+  })
+
+  it('builds explicit custom-provider args for Codex proxy launches', () => {
+    const joined = buildCodexProxyArgs('http://127.0.0.1:18045/v1').join(' ')
+
+    assert.match(joined, /model_provider="fcm_proxy"/)
+    assert.match(joined, /model_providers\.fcm_proxy\.env_key="FCM_PROXY_API_KEY"/)
+    assert.match(joined, /model_providers\.fcm_proxy\.wire_api="responses"/)
+    assert.match(joined, /127\.0\.0\.1:18045\/v1/)
+  })
+
+  it('extracts Gemini config validation errors from CLI output', () => {
+    const output = [
+      'Invalid configuration in /Users/vava/.gemini/settings.json:',
+      '',
+      'Error in: mcpServers.context7',
+      "    Unrecognized key(s) in object: 'disabled'",
+    ].join('\n')
+
+    const error = extractGeminiConfigError(output)
+    assert.match(error || '', /Invalid configuration/)
+    assert.match(error || '', /mcpServers\.context7/)
+  })
+})
+
+describe('proxy sync target resolution', () => {
+  it('follows the current tool mode instead of a stored activeTool selector', () => {
+    assert.equal(resolveProxySyncToolMode('opencode-desktop'), 'opencode')
+    assert.equal(resolveProxySyncToolMode('codex'), 'codex')
+    assert.equal(resolveProxySyncToolMode('gemini'), null)
+  })
+})
+
 describe('endpoint install tracking', () => {
+  it('keeps launcher-only tools out of the Y install target list', () => {
+    const installTargets = getInstallTargetModes()
+    assert.ok(!installTargets.includes('claude-code'))
+    assert.ok(!installTargets.includes('codex'))
+    assert.ok(!installTargets.includes('gemini'))
+    assert.ok(installTargets.includes('openhands'))
+  })
+
   it('normalizes tracked installs to canonical shape', () => {
     const normalized = normalizeEndpointInstalls([
       {

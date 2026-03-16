@@ -27,7 +27,7 @@
  *   - Amp gets ~/.config/amp/settings.json
  *   - Gemini gets ~/.gemini/settings.json
  *   - Qwen gets ~/.qwen/settings.json with modelProviders
- *   - Claude Code, Codex, OpenHands get a sourceable env file (~/.fcm-{tool}-env)
+ *   - OpenHands gets a sourceable env file (~/.fcm-openhands-env)
  *
  * @functions
  *   → `getConfiguredInstallableProviders` — list configured providers that support direct endpoint installs
@@ -54,8 +54,9 @@ import { ENV_VAR_NAMES, PROVIDER_METADATA } from './provider-metadata.js'
 import { getToolMeta } from './tool-metadata.js'
 
 const DIRECT_INSTALL_UNSUPPORTED_PROVIDERS = new Set(['replicate', 'zai'])
-// 📖 All supported install targets — matches TOOL_MODE_ORDER in tool-metadata.js
-const INSTALL_TARGET_MODES = ['opencode', 'opencode-desktop', 'openclaw', 'crush', 'goose', 'pi', 'aider', 'claude-code', 'codex', 'gemini', 'qwen', 'openhands', 'amp']
+// 📖 Install Endpoints only lists tools whose persisted config shape is actually supported here.
+// 📖 Claude Code, Codex, and Gemini stay launcher-only until their proxy/runtime setup is stable.
+const INSTALL_TARGET_MODES = ['opencode', 'opencode-desktop', 'openclaw', 'crush', 'goose', 'pi', 'aider', 'qwen', 'openhands', 'amp']
 
 // 📖 Connection modes: direct (pure provider) vs FCM proxy (rotates keys)
 export const CONNECTION_MODES = [
@@ -528,7 +529,7 @@ function installIntoEnvBasedTool(providerKey, models, apiKey, toolMode, paths, c
     if (connectionMode === 'proxy') {
       // 📖 Point to proxy base (not /v1) — Claude Code adds /v1/messages itself
       const proxyBase = effectiveBaseUrl.replace(/\/v1$/, '')
-      envLines.push(`export ANTHROPIC_API_KEY="${effectiveApiKey}"`)
+      envLines.push(`export ANTHROPIC_AUTH_TOKEN="${effectiveApiKey}"`)
       envLines.push(`export ANTHROPIC_BASE_URL="${proxyBase}"`)
       envLines.push(`export ANTHROPIC_MODEL="${effectiveModelId}"`)
     } else {

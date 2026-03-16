@@ -679,7 +679,8 @@ export function normalizeProxySettings(proxy = null) {
     daemonConsent: (typeof proxy?.daemonConsent === 'string' && proxy.daemonConsent.length > 0)
       ? proxy.daemonConsent
       : null,
-    // 📖 activeTool — which tool the proxy auto-syncs to (defaults to current Z mode)
+    // 📖 activeTool — legacy field kept only for backward compatibility.
+    // 📖 Runtime sync now follows the current Z-selected tool automatically.
     activeTool: (typeof proxy?.activeTool === 'string' && proxy.activeTool.length > 0)
       ? proxy.activeTool
       : null,

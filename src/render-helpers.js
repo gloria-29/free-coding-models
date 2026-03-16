@@ -150,10 +150,12 @@ export function sliceOverlayLines(lines, offset, terminalRows) {
 
 // 📖 calculateViewport: Computes the visible slice of model rows that fits in the terminal.
 // 📖 When scroll indicators are needed, they each consume 1 line from the model budget.
+// 📖 `extraFixedLines` lets callers reserve temporary footer rows without shrinking the
+// 📖 viewport permanently for the normal case.
 // 📖 Returns { startIdx, endIdx, hasAbove, hasBelow } for rendering.
-export function calculateViewport(terminalRows, scrollOffset, totalModels) {
+export function calculateViewport(terminalRows, scrollOffset, totalModels, extraFixedLines = 0) {
   if (terminalRows <= 0) return { startIdx: 0, endIdx: totalModels, hasAbove: false, hasBelow: false }
-  let maxSlots = terminalRows - TABLE_FIXED_LINES
+  let maxSlots = terminalRows - TABLE_FIXED_LINES - extraFixedLines
   if (maxSlots < 1) maxSlots = 1
   if (totalModels <= maxSlots) return { startIdx: 0, endIdx: totalModels, hasAbove: false, hasBelow: false }
 

@@ -25,7 +25,13 @@ import {
   translateAnthropicToOpenAI,
   translateOpenAIToAnthropic,
   createAnthropicSSETransformer,
+  estimateAnthropicTokens,
 } from './anthropic-translator.js'
+import {
+  translateResponsesToOpenAI,
+  translateOpenAIToResponses,
+  createResponsesSSETransformer,
+} from './responses-translator.js'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -227,7 +233,21 @@ export class ProxyServer {
         const msg = err.statusCode === 413 ? 'Request body too large' : 'Internal server error'
         sendJson(res, status, { error: msg })
       })
-    } else if (req.method === 'POST' && (req.url === '/v1/completions' || req.url === '/v1/responses')) {
+    } else if (req.method === 'POST' && req.url === '/v1/messages/count_tokens') {
+      this._handleAnthropicCountTokens(req, res).catch(err => {
+        console.error('[proxy] Internal error:', err)
+        const status = err.statusCode === 413 ? 413 : 500
+        const msg = err.statusCode === 413 ? 'Request body too large' : 'Internal server error'
+        sendJson(res, status, { error: msg })
+      })
+    } else if (req.method === 'POST' && req.url === '/v1/responses') {
+      this._handleResponses(req, res).catch(err => {
+        console.error('[proxy] Internal error:', err)
+        const status = err.statusCode === 413 ? 413 : 500
+        const msg = err.statusCode === 413 ? 'Request body too large' : 'Internal server error'
+        sendJson(res, status, { error: msg })
+      })
+    } else if (req.method === 'POST' && req.url === '/v1/completions') {
       // These legacy/alternative OpenAI endpoints are not supported by the proxy.
       // Return 501 (not 404) so callers get a clear signal instead of silently failing.
       sendJson(res, 501, {
@@ -244,19 +264,24 @@ export class ProxyServer {
   _handleModels(res) {
     const seen = new Set()
     const data = []
+    const models = []
     for (const acct of this._accounts) {
       const publicModelId = acct.proxyModelId || acct.modelId
       if (!seen.has(publicModelId)) {
         seen.add(publicModelId)
-        data.push({
+        const modelEntry = {
           id: publicModelId,
+          slug: publicModelId,
+          name: publicModelId,
           object: 'model',
           created: Math.floor(Date.now() / 1000),
           owned_by: 'proxy',
-        })
+        }
+        data.push(modelEntry)
+        models.push(modelEntry)
       }
     }
-    sendJson(res, 200, { object: 'list', data })
+    sendJson(res, 200, { object: 'list', data, models })
   }
 
   // ── POST /v1/chat/completions ──────────────────────────────────────────────
@@ -731,6 +756,146 @@ export class ProxyServer {
   }
 
   /**
+   * 📖 Count tokens for Anthropic Messages requests without calling upstream.
+   * 📖 Claude Code uses this endpoint for budgeting / UI hints, so a fast local
+   * 📖 estimate is enough to keep the flow working through the proxy.
+   */
+  async _handleAnthropicCountTokens(clientReq, clientRes) {
+    const rawBody = await readBody(clientReq)
+    let anthropicBody
+    try {
+      anthropicBody = JSON.parse(rawBody)
+    } catch {
+      return sendJson(clientRes, 400, { error: { type: 'invalid_request_error', message: 'Invalid JSON body' } })
+    }
+
+    sendJson(clientRes, 200, {
+      input_tokens: estimateAnthropicTokens(anthropicBody),
+    })
+  }
+
+  /**
+   * 📖 Handle OpenAI Responses API requests by translating them to chat
+   * 📖 completions, forwarding through the existing proxy path, then converting
+   * 📖 the result back to the Responses wire format.
+   */
+  async _handleResponses(clientReq, clientRes) {
+    const rawBody = await readBody(clientReq)
+    let responsesBody
+    try {
+      responsesBody = JSON.parse(rawBody)
+    } catch {
+      return sendJson(clientRes, 400, { error: 'Invalid JSON body' })
+    }
+
+    const isStreaming = responsesBody.stream === true || String(clientReq.headers.accept || '').includes('text/event-stream')
+    const openaiBody = translateResponsesToOpenAI({ ...responsesBody, stream: isStreaming })
+
+    if (isStreaming) {
+      await this._handleResponsesStreaming(openaiBody, responsesBody.model, clientRes)
+    } else {
+      await this._handleResponsesJson(openaiBody, responsesBody.model, clientRes)
+    }
+  }
+
+  async _handleResponsesJson(openaiBody, requestModel, clientRes) {
+    const capturedChunks = []
+    let capturedStatusCode = 200
+    let capturedHeaders = {}
+
+    const fakeRes = {
+      headersSent: false,
+      destroyed: false,
+      socket: null,
+      writeHead(statusCode, headers) {
+        capturedStatusCode = statusCode
+        capturedHeaders = headers || {}
+        this.headersSent = true
+      },
+      write(chunk) { capturedChunks.push(chunk) },
+      end(data) {
+        if (data) capturedChunks.push(data)
+      },
+      on() { return this },
+      once() { return this },
+      emit() { return false },
+      destroy() { this.destroyed = true },
+      removeListener() { return this },
+    }
+
+    await this._handleChatCompletionsInternal(openaiBody, fakeRes)
+
+    const responseBody = capturedChunks.join('')
+    if (capturedStatusCode >= 200 && capturedStatusCode < 300) {
+      try {
+        const openaiResponse = JSON.parse(responseBody)
+        const responsesResponse = translateOpenAIToResponses(openaiResponse, requestModel)
+        sendJson(clientRes, 200, responsesResponse)
+      } catch {
+        sendJson(clientRes, capturedStatusCode, responseBody)
+      }
+      return
+    }
+
+    // 📖 Forward upstream-style JSON errors unchanged for OpenAI-compatible clients.
+    sendJson(clientRes, capturedStatusCode, responseBody)
+  }
+
+  async _handleResponsesStreaming(openaiBody, requestModel, clientRes) {
+    const { transform } = createResponsesSSETransformer(requestModel)
+    await this._handleResponsesStreamDirect(openaiBody, clientRes, transform)
+  }
+
+  async _handleResponsesStreamDirect(openaiBody, clientRes, sseTransform) {
+    const fingerprint = createHash('sha256')
+      .update(JSON.stringify(openaiBody.messages?.slice(-1) ?? []))
+      .digest('hex')
+      .slice(0, 16)
+
+    const requestedModel = typeof openaiBody.model === 'string'
+      ? openaiBody.model.replace(/^fcm-proxy\//, '')
+      : undefined
+
+    if (requestedModel && !this._accountManager.hasAccountsForModel(requestedModel)) {
+      return sendJson(clientRes, 404, {
+        error: 'Model not found',
+        message: `Model '${requestedModel}' is not available.`,
+      })
+    }
+
+    sseTransform.pipe(clientRes)
+
+    for (let attempt = 0; attempt < this._retries; attempt++) {
+      const delay = this._retryDelays[Math.min(attempt, this._retryDelays.length - 1)]
+      if (delay > 0) await new Promise(r => setTimeout(r, delay + Math.random() * 100))
+
+      const selectOpts = attempt === 0
+        ? { sessionFingerprint: fingerprint, requestedModel }
+        : { requestedModel }
+      const account = this._accountManager.selectAccount(selectOpts)
+      if (!account) break
+
+      const result = await this._forwardRequestForResponsesStream(account, openaiBody, sseTransform, clientRes)
+      if (result.done) return
+
+      const { statusCode, responseBody, responseHeaders, networkError } = result
+      const classified = classifyError(
+        networkError ? 0 : statusCode,
+        responseBody || '',
+        responseHeaders || {}
+      )
+      this._accountManager.recordFailure(account.id, classified, { providerKey: account.providerKey })
+      if (!classified.shouldRetry) {
+        sseTransform.end()
+        return sendJson(clientRes, statusCode || 500, responseBody || JSON.stringify({ error: 'Upstream error' }))
+      }
+    }
+
+    sseTransform.end()
+    sendJson(clientRes, 503, { error: 'All accounts exhausted or unavailable' })
+  }
+
+  /**
    * 📖 Handle non-streaming Anthropic Messages by internally dispatching to
    * chat completions logic and translating the JSON response back.
    */
@@ -958,6 +1123,95 @@ export class ProxyServer {
           // 📖 Pipe upstream SSE through Anthropic translator
           upstreamRes.pipe(sseTransform, { end: true })
 
+          upstreamRes.on('end', () => {
+            this._accountManager.recordSuccess(account.id, Date.now() - startTime)
+          })
+
+          clientRes.on('close', () => {
+            if (!upstreamRes.destroyed) upstreamRes.destroy()
+            if (!upstreamReq.destroyed) upstreamReq.destroy()
+          })
+
+          resolve({ done: true })
+        } else {
+          const chunks = []
+          upstreamRes.on('data', chunk => chunks.push(chunk))
+          upstreamRes.on('end', () => {
+            resolve({
+              done: false,
+              statusCode,
+              responseBody: Buffer.concat(chunks).toString(),
+              responseHeaders: upstreamRes.headers,
+              networkError: false,
+            })
+          })
+        }
+      })
+
+      upstreamReq.on('error', err => {
+        resolve({
+          done: false,
+          statusCode: 0,
+          responseBody: err.message,
+          responseHeaders: {},
+          networkError: true,
+        })
+      })
+
+      upstreamReq.setTimeout(this._upstreamTimeoutMs, () => {
+        upstreamReq.destroy(new Error(`Upstream request timed out after ${this._upstreamTimeoutMs}ms`))
+      })
+
+      upstreamReq.write(bodyStr)
+      upstreamReq.end()
+    })
+  }
+
+  /**
+   * 📖 Forward a streaming chat-completions request and translate the upstream
+   * 📖 SSE stream into Responses API events on the fly.
+   */
+  _forwardRequestForResponsesStream(account, body, sseTransform, clientRes) {
+    return new Promise(resolve => {
+      const newBody = { ...body, model: account.modelId, stream: true }
+      const bodyStr = JSON.stringify(newBody)
+      const baseUrl = account.url.replace(/\/$/, '')
+      let upstreamUrl
+      try {
+        upstreamUrl = new URL(baseUrl + '/chat/completions')
+      } catch {
+        return resolve({ done: false, statusCode: 0, responseBody: 'Invalid upstream URL', networkError: true })
+      }
+
+      const client = selectClient(account.url)
+      const startTime = Date.now()
+      const requestOptions = {
+        hostname: upstreamUrl.hostname,
+        port: upstreamUrl.port || (upstreamUrl.protocol === 'https:' ? 443 : 80),
+        path: upstreamUrl.pathname + (upstreamUrl.search || ''),
+        method: 'POST',
+        headers: {
+          'authorization': `Bearer ${account.apiKey}`,
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(bodyStr),
+        },
+      }
+
+      const upstreamReq = client.request(requestOptions, upstreamRes => {
+        const { statusCode } = upstreamRes
+
+        if (statusCode >= 200 && statusCode < 300) {
+          if (!clientRes.headersSent) {
+            clientRes.writeHead(200, {
+              'content-type': 'text/event-stream',
+              'cache-control': 'no-cache',
+            })
+          }
+
+          upstreamRes.on('error', err => { if (!clientRes.destroyed) clientRes.destroy(err) })
+          clientRes.on('error', () => { if (!upstreamRes.destroyed) upstreamRes.destroy() })
+
+          upstreamRes.pipe(sseTransform, { end: true })
           upstreamRes.on('end', () => {
             this._accountManager.recordSuccess(account.id, Date.now() - startTime)
           })

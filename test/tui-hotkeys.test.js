@@ -391,6 +391,12 @@ describe('tui-hotkeys – version status indicator', () => {
     assert.equal(info.latestVersion, '0.2.1')
   })
 
+  it('reuses the startup auto-check result when the user skipped the update prompt', () => {
+    const info = getVersionStatusInfo('idle', null, '0.2.1')
+    assert.equal(info.isOutdated, true)
+    assert.equal(info.latestVersion, '0.2.1')
+  })
+
   it('stays quiet when no update has been found', () => {
     const info = getVersionStatusInfo('idle', null)
     assert.equal(info.isOutdated, false)

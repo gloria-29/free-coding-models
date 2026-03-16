@@ -82,11 +82,11 @@ function makeRequest(port, body, method = 'POST', path = '/v1/chat/completions')
 }
 
 // Helper: make streaming request
-function makeStreamRequest(port, body) {
+function makeStreamRequest(port, body, path = '/v1/chat/completions') {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify({ ...body, stream: true })
     const req = http.request({
-      hostname: '127.0.0.1', port, method: 'POST', path: '/v1/chat/completions',
+      hostname: '127.0.0.1', port, method: 'POST', path,
       headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) },
     }, res => {
       const chunks = []
@@ -571,11 +571,11 @@ describe('ProxyServer – log coherence', () => {
    })
  })
 
-// ─── Suite: ProxyServer – unsupported paths return 501, not 404 ───────────────
-// These tests verify that POST /v1/completions and POST /v1/responses return
-// 501 Not Implemented (not silent 404) so callers get a clear signal.
+// ─── Suite: ProxyServer – compatibility routes ────────────────────────────────
+// These tests verify that legacy unsupported routes still fail clearly, while
+// Responses + Anthropic compatibility routes stay functional.
 
-describe('ProxyServer – unsupported paths return 501', () => {
+describe('ProxyServer – compatibility routes', () => {
   const cleanups = []
 
   after(async () => {
@@ -594,16 +594,90 @@ describe('ProxyServer – unsupported paths return 501', () => {
     assert.match(body.error, /not implemented|not supported/i, 'error message should mention not implemented or not supported')
   })
 
-  it('POST /v1/responses returns 501 Not Implemented', async () => {
+  it('POST /v1/responses returns Responses JSON translated from chat completions', async () => {
+    const upstream = await createMockUpstream(
+      {
+        id: 'chatcmpl_resp_json',
+        model: 'provider-model',
+        choices: [{ message: { content: 'ok from responses' } }],
+        usage: { prompt_tokens: 2, completion_tokens: 3 },
+      },
+      200,
+    )
+    cleanups.push(() => upstream.server.close())
+
+    const accounts = [{
+      id: 'responses-json-acct',
+      providerKey: 'test',
+      apiKey: 'key-1',
+      modelId: 'provider-model',
+      proxyModelId: 'gpt-oss-120b',
+      url: upstream.url + '/v1',
+    }]
+    const proxy = new ProxyServer({ port: 0, accounts })
+    const { port } = await proxy.start()
+    cleanups.push(() => proxy.stop())
+
+    const res = await makeRequest(port, {
+      model: 'gpt-oss-120b',
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
+    }, 'POST', '/v1/responses')
+    assert.strictEqual(res.statusCode, 200)
+    const body = JSON.parse(res.body)
+    assert.strictEqual(body.object, 'response')
+    assert.strictEqual(body.output[0].type, 'message')
+    assert.match(body.output[0].content[0].text, /ok from responses/)
+    assert.strictEqual(body.usage.input_tokens, 2)
+    assert.strictEqual(body.usage.output_tokens, 3)
+  })
+
+  it('POST /v1/responses streams Responses SSE translated from chat completions', async () => {
+    const upstream = await createMockStreamingUpstream()
+    cleanups.push(() => upstream.server.close())
+
+    const accounts = [{
+      id: 'responses-stream-acct',
+      providerKey: 'test',
+      apiKey: 'key-1',
+      modelId: 'provider-model',
+      proxyModelId: 'gpt-oss-120b',
+      url: upstream.url + '/v1',
+    }]
+    const proxy = new ProxyServer({ port: 0, accounts })
+    const { port } = await proxy.start()
+    cleanups.push(() => proxy.stop())
+
+    const res = await makeStreamRequest(port, {
+      model: 'gpt-oss-120b',
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
+    }, '/v1/responses')
+
+    assert.strictEqual(res.statusCode, 200)
+    const allData = res.chunks.join('')
+    assert.ok(allData.includes('response.created'), 'should emit response.created')
+    assert.ok(allData.includes('response.output_text.delta'), 'should emit text deltas')
+    assert.ok(allData.includes('response.completed'), 'should emit response.completed')
+  })
+
+  it('POST /v1/messages/count_tokens returns a positive local estimate', async () => {
     const proxy = new ProxyServer({ port: 0, accounts: [] })
     const { port } = await proxy.start()
     cleanups.push(() => proxy.stop())
 
-    const res = await makeRequest(port, { model: 'any', input: 'hello' }, 'POST', '/v1/responses')
-    assert.strictEqual(res.statusCode, 501)
+    const res = await makeRequest(port, {
+      model: 'claude-sonnet-4',
+      system: 'You are a helpful coding assistant.',
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'Count the tokens in this request.' }] },
+      ],
+      tools: [
+        { name: 'exec_command', description: 'Run a shell command', input_schema: { type: 'object', properties: { cmd: { type: 'string' } } } },
+      ],
+    }, 'POST', '/v1/messages/count_tokens')
+
+    assert.strictEqual(res.statusCode, 200)
     const body = JSON.parse(res.body)
-    assert.ok(body.error, 'should include error field')
-    assert.match(body.error, /not implemented|not supported/i, 'error message should mention not implemented or not supported')
+    assert.ok(body.input_tokens > 0)
   })
 
   it('GET /unknown-path returns 404', async () => {
@@ -916,7 +990,7 @@ describe('ProxyServer – provider 404 model-not-found triggers rotation', () =>
     cleanups.push(() => proxy.stop())
 
     // Directly inject a MODEL_NOT_FOUND failure into bad-404 to simulate what the proxy does
-    const { classifyError: ce } = await import('../lib/error-classifier.js')
+    const { classifyError: ce } = await import('../src/error-classifier.js')
     const classified = ce(404, 'Model not found, inaccessible, and/or not deployed', {})
     proxy._accountManager.recordFailure('bad-404', classified, { providerKey: 'fireworks' })
 

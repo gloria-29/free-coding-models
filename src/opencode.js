@@ -8,7 +8,7 @@
  *   - Launch OpenCode CLI or Desktop
  *   - Manage ZAI proxy bridge for non-standard API paths
  *   - Start/stop the multi-account proxy server (fcm-proxy)
- *   - Auto-start proxy when OpenCode config is already synced
+ *   - Auto-start proxy when the current tool is configured for proxy auto-sync
  *
  *   🎯 Key features:
  *   - Provider-aware config setup for OpenCode (NIM, Groq, Cerebras, etc.)
@@ -21,7 +21,7 @@
  *   - `startOpenCode` — Launch OpenCode CLI with selected model
  *   - `startOpenCodeDesktop` — Set model and open Desktop app
  *   - `startProxyAndLaunch` — Start fcm-proxy then launch OpenCode
- *   - `autoStartProxyIfSynced` — Auto-start proxy if opencode.json has fcm-proxy
+ *   - `autoStartProxyIfSynced` — Auto-start proxy and sync the current tool when enabled
  *   - `ensureProxyRunning` — Ensure proxy is running (start or reuse)
  *   - `isProxyEnabledForConfig` — Check whether proxy mode is opted in
  *
@@ -40,12 +40,14 @@ import { copyFileSync, existsSync } from 'fs'
 import { sources } from '../sources.js'
 import { PROVIDER_COLOR } from './render-table.js'
 import { ProxyServer } from './proxy-server.js'
-import { loadOpenCodeConfig, saveOpenCodeConfig, syncToOpenCode } from './opencode-sync.js'
+import { loadOpenCodeConfig, saveOpenCodeConfig } from './opencode-sync.js'
 import { getApiKey, getProxySettings } from './config.js'
 import { ENV_VAR_NAMES, OPENCODE_MODEL_MAP, isWindows, isMac, isLinux } from './provider-metadata.js'
 import { setActiveProxy } from './render-table.js'
 import { buildProxyTopologyFromConfig as _buildTopology } from './proxy-topology.js'
 import { isDaemonRunning, getDaemonInfo } from './daemon-manager.js'
+import { syncProxyToTool, resolveProxySyncToolMode } from './proxy-sync.js'
+import { getToolMeta } from './tool-metadata.js'
 
 // 📖 OpenCode config location: ~/.config/opencode/opencode.json on ALL platforms.
 // 📖 OpenCode uses xdg-basedir which resolves to %USERPROFILE%\.config on Windows.
@@ -633,24 +635,27 @@ export async function autoStartProxyIfSynced(fcmConfig, state) {
   try {
     const proxySettings = getProxySettings(fcmConfig)
     if (!proxySettings.enabled || !proxySettings.syncToOpenCode) return
-
-    const ocConfig = loadOpenCodeConfig()
-    if (!ocConfig?.provider?.['fcm-proxy']) return
+    const currentToolMode = state?.mode || 'opencode'
+    const syncTarget = resolveProxySyncToolMode(currentToolMode)
+    if (!syncTarget) return
 
     state.proxyStartupStatus = { phase: 'starting' }
 
     const started = await ensureProxyRunning(fcmConfig)
-
-    syncToOpenCode(fcmConfig, sources, mergedModelsRef, {
-      proxyPort: started.port,
-      proxyToken: started.proxyToken,
-      availableModelSlugs: started.availableModelSlugs,
-    })
+    const syncResult = syncProxyToTool(syncTarget, {
+      baseUrl: `http://127.0.0.1:${started.port}/v1`,
+      token: started.proxyToken,
+    }, mergedModelsRef)
+    if (!syncResult.success) {
+      throw new Error(syncResult.error || `Proxy sync failed for ${syncTarget}`)
+    }
 
     state.proxyStartupStatus = {
       phase: 'running',
       port: started.port,
       accountCount: started.accountCount,
+      tool: getToolMeta(syncTarget).label,
+      path: syncResult.path || null,
     }
   } catch (err) {
     state.proxyStartupStatus = {

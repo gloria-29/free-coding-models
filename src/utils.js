@@ -386,16 +386,16 @@ export function findBestModel(results) {
 // 📖 Slices from index 2 to get user-provided arguments only.
 //
 // 📖 Argument types:
-//   - API key: first positional arg that doesn't start with "--" (e.g., "nvapi-xxx")
+//   - API key: first positional arg that does not look like a CLI flag (e.g., "nvapi-xxx")
 //   - Boolean flags: --best, --fiable, --opencode, --opencode-desktop, --openclaw,
 //     --aider, --crush, --goose, --claude-code, --codex, --gemini, --qwen,
-//     --openhands, --amp, --pi, --no-telemetry, --json (case-insensitive)
+//     --openhands, --amp, --pi, --no-telemetry, --json, --help/-h (case-insensitive)
 //   - Value flag: --tier <letter> (the next non-flag arg is the tier value)
 //
 // 📖 Returns:
 //   { apiKey, bestMode, fiableMode, openCodeMode, openCodeDesktopMode, openClawMode,
 //     aiderMode, crushMode, gooseMode, claudeCodeMode, codexMode, geminiMode,
-//     qwenMode, openHandsMode, ampMode, piMode, noTelemetry, jsonMode, tierFilter }
+//     qwenMode, openHandsMode, ampMode, piMode, noTelemetry, jsonMode, helpMode, tierFilter }
 //
 // 📖 Note: apiKey may be null here — the main CLI falls back to env vars and saved config.
 export function parseArgs(argv) {
@@ -420,7 +420,7 @@ export function parseArgs(argv) {
   if (profileValueIdx !== -1) skipIndices.add(profileValueIdx)
 
   for (const [i, arg] of args.entries()) {
-    if (arg.startsWith('--')) {
+    if (arg.startsWith('--') || arg === '-h') {
       flags.push(arg.toLowerCase())
     } else if (skipIndices.has(i)) {
       // 📖 Skip — this is a value for --tier or --profile, not an API key
@@ -447,6 +447,7 @@ export function parseArgs(argv) {
   const noTelemetry = flags.includes('--no-telemetry')
   const cleanProxyMode = flags.includes('--clean-proxy') || flags.includes('--proxy-clean')
   const jsonMode = flags.includes('--json')
+  const helpMode = flags.includes('--help') || flags.includes('-h')
 
   let tierFilter = tierValueIdx !== -1 ? args[tierValueIdx].toUpperCase() : null
 
@@ -475,6 +476,7 @@ export function parseArgs(argv) {
     noTelemetry,
     cleanProxyMode,
     jsonMode,
+    helpMode,
     tierFilter,
     profileName,
     recommendMode
@@ -707,21 +709,42 @@ export function getProxyStatusInfo(proxyStartupStatus, isProxyActive, isProxyEna
 }
 
 /**
- * 📖 getVersionStatusInfo turns the settings update-check state into a compact,
+ * 📖 getVersionStatusInfo turns startup + manual update-check state into a compact,
  * 📖 render-friendly footer descriptor for the main table.
  *
- * 📖 Only an explicit `available` state should mark the local install as outdated.
- * 📖 This avoids showing a scary warning before the user has actually checked npm.
+ * 📖 Priority:
+ * 📖   1. Manual Settings check found an update (`available`)
+ * 📖   2. Startup auto-check already found a newer npm version
+ * 📖   3. Otherwise stay quiet
+ * 📖
+ * 📖 `versionAlertsEnabled` lets the CLI suppress npm-specific warnings in dev checkouts,
+ * 📖 where telling contributors to run a global npm update would be bogus.
  *
  * @param {'idle'|'checking'|'available'|'up-to-date'|'error'|'installing'} updateState
  * @param {string|null} latestVersion
+ * @param {string|null} [startupLatestVersion=null]
+ * @param {boolean} [versionAlertsEnabled=true]
  * @returns {{ isOutdated: boolean, latestVersion: string|null }}
  */
-export function getVersionStatusInfo(updateState, latestVersion) {
+export function getVersionStatusInfo(updateState, latestVersion, startupLatestVersion = null, versionAlertsEnabled = true) {
+  if (!versionAlertsEnabled) {
+    return {
+      isOutdated: false,
+      latestVersion: null,
+    }
+  }
+
   if (updateState === 'available' && typeof latestVersion === 'string' && latestVersion.trim()) {
     return {
       isOutdated: true,
       latestVersion: latestVersion.trim(),
+    }
+  }
+
+  if (typeof startupLatestVersion === 'string' && startupLatestVersion.trim()) {
+    return {
+      isOutdated: true,
+      latestVersion: startupLatestVersion.trim(),
     }
   }
 
