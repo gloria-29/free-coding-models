@@ -49,7 +49,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { MODELS, sources } from '../sources.js'
-import { getApiKey, saveConfig } from './config.js'
+import { getApiKey, saveConfig, getProxySettings, loadConfig } from './config.js'
 import { ENV_VAR_NAMES, PROVIDER_METADATA } from './provider-metadata.js'
 import { getToolMeta } from './tool-metadata.js'
 
@@ -487,30 +487,55 @@ function installIntoQwen(providerKey, models, apiKey, paths) {
 
 // 📖 installIntoEnvBasedTool handles tools that rely on env vars only (claude-code, codex, openhands).
 // 📖 We write a small .env-style helper file so users can source it before launching.
-function installIntoEnvBasedTool(providerKey, models, apiKey, toolMode, paths) {
+// 📖 When connectionMode is 'proxy', writes env vars pointing to the daemon's stable port/token.
+function installIntoEnvBasedTool(providerKey, models, apiKey, toolMode, paths, connectionMode = 'direct') {
   const providerId = getManagedProviderId(providerKey)
-  const baseUrl = resolveProviderBaseUrl(providerKey)
   const home = homedir()
   const envFileName = `.fcm-${toolMode}-env`
   const envFilePath = join(home, envFileName)
-
   const primaryModel = models[0]
+
+  // 📖 Resolve effective API key, base URL, and model ID based on connection mode
+  let effectiveApiKey = apiKey
+  let effectiveBaseUrl = resolveProviderBaseUrl(providerKey)
+  let effectiveModelId = primaryModel.modelId
+
+  if (connectionMode === 'proxy') {
+    // 📖 Read stable proxy settings from config for daemon-compatible env files
+    try {
+      const cfg = loadConfig()
+      const proxySettings = getProxySettings(cfg)
+      effectiveApiKey = proxySettings.stableToken || apiKey
+      const port = proxySettings.preferredPort || 18045
+      effectiveBaseUrl = `http://127.0.0.1:${port}/v1`
+    } catch { /* fallback to direct values */ }
+  }
+
   const envLines = [
     '# 📖 Managed by free-coding-models — source this file before launching the tool',
     `# 📖 Provider: ${getProviderLabel(providerKey)} (${models.length} models)`,
-    `export OPENAI_API_KEY="${apiKey}"`,
-    `export OPENAI_BASE_URL="${baseUrl}"`,
-    `export OPENAI_MODEL="${primaryModel.modelId}"`,
-    `export LLM_API_KEY="${apiKey}"`,
-    `export LLM_BASE_URL="${baseUrl}"`,
-    `export LLM_MODEL="openai/${primaryModel.modelId}"`,
+    `# 📖 Connection: ${connectionMode === 'proxy' ? 'FCM Proxy (background daemon)' : 'Direct provider'}`,
+    `export OPENAI_API_KEY="${effectiveApiKey}"`,
+    `export OPENAI_BASE_URL="${effectiveBaseUrl}"`,
+    `export OPENAI_MODEL="${effectiveModelId}"`,
+    `export LLM_API_KEY="${effectiveApiKey}"`,
+    `export LLM_BASE_URL="${effectiveBaseUrl}"`,
+    `export LLM_MODEL="openai/${effectiveModelId}"`,
   ]
 
-  // 📖 Tool-specific extra env vars
+  // 📖 Claude Code: Anthropic-specific env vars pointing to proxy /v1/messages endpoint
   if (toolMode === 'claude-code') {
-    envLines.push(`export ANTHROPIC_AUTH_TOKEN="${apiKey}"`)
-    envLines.push(`export ANTHROPIC_BASE_URL="${baseUrl}"`)
-    envLines.push(`export ANTHROPIC_MODEL="${primaryModel.modelId}"`)
+    if (connectionMode === 'proxy') {
+      // 📖 Point to proxy base (not /v1) — Claude Code adds /v1/messages itself
+      const proxyBase = effectiveBaseUrl.replace(/\/v1$/, '')
+      envLines.push(`export ANTHROPIC_API_KEY="${effectiveApiKey}"`)
+      envLines.push(`export ANTHROPIC_BASE_URL="${proxyBase}"`)
+      envLines.push(`export ANTHROPIC_MODEL="${effectiveModelId}"`)
+    } else {
+      envLines.push(`export ANTHROPIC_AUTH_TOKEN="${effectiveApiKey}"`)
+      envLines.push(`export ANTHROPIC_BASE_URL="${effectiveBaseUrl}"`)
+      envLines.push(`export ANTHROPIC_MODEL="${effectiveModelId}"`)
+    }
   }
 
   ensureDirFor(envFilePath)
@@ -556,7 +581,7 @@ export function installProviderEndpoints(config, providerKey, toolMode, options 
   } else if (canonicalToolMode === 'qwen') {
     installResult = installIntoQwen(providerKey, models, apiKey, paths)
   } else if (canonicalToolMode === 'claude-code' || canonicalToolMode === 'codex' || canonicalToolMode === 'openhands') {
-    installResult = installIntoEnvBasedTool(providerKey, models, apiKey, canonicalToolMode, paths)
+    installResult = installIntoEnvBasedTool(providerKey, models, apiKey, canonicalToolMode, paths, connectionMode)
   } else {
     throw new Error(`Unsupported install target: ${toolMode}`)
   }

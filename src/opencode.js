@@ -39,12 +39,13 @@ import { join } from 'path'
 import { copyFileSync, existsSync } from 'fs'
 import { sources } from '../sources.js'
 import { PROVIDER_COLOR } from './render-table.js'
-import { resolveCloudflareUrl } from './ping.js'
 import { ProxyServer } from './proxy-server.js'
 import { loadOpenCodeConfig, saveOpenCodeConfig, syncToOpenCode } from './opencode-sync.js'
-import { getApiKey, getProxySettings, resolveApiKeys } from './config.js'
+import { getApiKey, getProxySettings } from './config.js'
 import { ENV_VAR_NAMES, OPENCODE_MODEL_MAP, isWindows, isMac, isLinux } from './provider-metadata.js'
 import { setActiveProxy } from './render-table.js'
+import { buildProxyTopologyFromConfig as _buildTopology } from './proxy-topology.js'
+import { isDaemonRunning, getDaemonInfo } from './daemon-manager.js'
 
 // 📖 OpenCode config location: ~/.config/opencode/opencode.json on ALL platforms.
 // 📖 OpenCode uses xdg-basedir which resolves to %USERPROFILE%\.config on Windows.
@@ -527,6 +528,7 @@ export async function startOpenCode(model, fcmConfig) {
 // ─── Proxy lifecycle ─────────────────────────────────────────────────────────
 
 async function cleanupProxy() {
+  // 📖 Only clean up in-process proxy. If using daemon, it stays alive.
   if (proxyCleanedUp || !activeProxy) return
   proxyCleanedUp = true
   const proxy = activeProxy
@@ -546,35 +548,10 @@ function registerExitHandlers() {
   process.once('exit',    cleanup)
 }
 
+// 📖 Thin wrapper that passes module-level mergedModelsRef to the shared topology builder.
+// 📖 The standalone daemon calls _buildTopology() directly with its own merged models.
 export function buildProxyTopologyFromConfig(fcmConfig) {
-  const accounts = []
-  const proxyModels = {}
-
-  for (const merged of mergedModelsRef) {
-    proxyModels[merged.slug] = { name: merged.label }
-
-    for (const providerEntry of merged.providers) {
-      const keys = resolveApiKeys(fcmConfig, providerEntry.providerKey)
-      const providerSource = sources[providerEntry.providerKey]
-      if (!providerSource) continue
-
-      const rawUrl = resolveCloudflareUrl(providerSource.url)
-      const baseUrl = rawUrl.replace(/\/chat\/completions$/, '')
-
-      keys.forEach((apiKey, keyIdx) => {
-        accounts.push({
-          id: `${providerEntry.providerKey}/${merged.slug}/${keyIdx}`,
-          providerKey: providerEntry.providerKey,
-          proxyModelId: merged.slug,
-          modelId: providerEntry.modelId,
-          url: baseUrl,
-          apiKey,
-        })
-      })
-    }
-  }
-
-  return { accounts, proxyModels }
+  return _buildTopology(fcmConfig, mergedModelsRef, sources)
 }
 
 /**
@@ -594,6 +571,26 @@ export async function ensureProxyRunning(fcmConfig, { forceRestart = false } = {
 
   if (!isProxyEnabledForConfig(fcmConfig)) {
     throw new Error('Proxy mode is disabled in Settings')
+  }
+
+  // 📖 Phase 1: Check if background daemon is running — delegate instead of starting in-process
+  if (!forceRestart) {
+    try {
+      const daemonRunning = await isDaemonRunning()
+      if (daemonRunning) {
+        const info = getDaemonInfo()
+        if (info) {
+          return {
+            port: info.port,
+            accountCount: info.accountCount || 0,
+            proxyToken: info.token,
+            proxyModels: null,
+            availableModelSlugs: new Set(), // 📖 daemon handles model discovery
+            isDaemon: true,
+          }
+        }
+      }
+    } catch { /* daemon check failed — fall through to in-process */ }
   }
 
   if (forceRestart && activeProxy) {
@@ -619,8 +616,9 @@ export async function ensureProxyRunning(fcmConfig, { forceRestart = false } = {
     throw new Error('No API keys found for proxy-capable models')
   }
 
-  const proxyToken = `fcm_${randomUUID().replace(/-/g, '')}`
+  // 📖 Use stable token from config so env files / tool configs survive restarts
   const proxySettings = getProxySettings(fcmConfig)
+  const proxyToken = proxySettings.stableToken || `fcm_${randomUUID().replace(/-/g, '')}`
   const preferredPort = Number.isInteger(proxySettings.preferredPort) ? proxySettings.preferredPort : 0
   const proxy = new ProxyServer({ port: preferredPort, accounts, proxyApiKey: proxyToken })
   const { port } = await proxy.start()

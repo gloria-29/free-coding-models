@@ -1022,14 +1022,11 @@ export function createKeyHandler(ctx) {
       const proxySettings = getProxySettings(state.config)
       const providerKeys = Object.keys(sources)
       const updateRowIdx = providerKeys.length
-      const proxyEnabledRowIdx = updateRowIdx + 1
-      const proxySyncRowIdx = updateRowIdx + 2
-      const proxyPortRowIdx = updateRowIdx + 3
-      const proxyCleanupRowIdx = updateRowIdx + 4
-      const changelogViewRowIdx = updateRowIdx + 5
-      // 📖 Profile rows start after maintenance + proxy rows + changelog row — one row per saved profile
+      const proxyDaemonRowIdx = updateRowIdx + 1
+      const changelogViewRowIdx = updateRowIdx + 2
+      // 📖 Profile rows start after maintenance + proxy/daemon + changelog
       const savedProfiles = listProfiles(state.config)
-      const profileStartIdx = updateRowIdx + 6
+      const profileStartIdx = updateRowIdx + 3
       const maxRowIdx = savedProfiles.length > 0 ? profileStartIdx + savedProfiles.length - 1 : changelogViewRowIdx
 
       // 📖 Edit/Add-key mode: capture typed characters for the API key
@@ -1071,32 +1068,6 @@ export function createKeyHandler(ctx) {
         } else if (str && !key.ctrl && !key.meta && str.length === 1) {
           // 📖 Append printable character to buffer
           state.settingsEditBuffer += str
-        }
-        return
-      }
-
-      // 📖 Dedicated inline editor for the preferred proxy port. 0 = OS auto-port.
-      if (state.settingsProxyPortEditMode) {
-        if (key.name === 'return') {
-          const raw = state.settingsProxyPortBuffer.trim()
-          const parsed = raw === '' ? 0 : Number.parseInt(raw, 10)
-          if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
-            state.settingsSyncStatus = { type: 'error', msg: '❌ Proxy port must be 0 (auto) or a number between 1 and 65535' }
-            return
-          }
-          if (!state.config.settings) state.config.settings = {}
-          state.config.settings.proxy = { ...proxySettings, preferredPort: parsed }
-          saveConfig(state.config)
-          state.settingsProxyPortEditMode = false
-          state.settingsProxyPortBuffer = ''
-          state.settingsSyncStatus = { type: 'success', msg: `✅ Preferred proxy port saved: ${parsed === 0 ? 'auto' : parsed}` }
-        } else if (key.name === 'escape') {
-          state.settingsProxyPortEditMode = false
-          state.settingsProxyPortBuffer = ''
-        } else if (key.name === 'backspace') {
-          state.settingsProxyPortBuffer = state.settingsProxyPortBuffer.slice(0, -1)
-        } else if (str && /^[0-9]$/.test(str) && state.settingsProxyPortBuffer.length < 5) {
-          state.settingsProxyPortBuffer += str
         }
         return
       }
@@ -1189,18 +1160,20 @@ export function createKeyHandler(ctx) {
           return
         }
 
-        if (state.settingsCursor === proxyPortRowIdx) {
-          state.settingsProxyPortEditMode = true
-          state.settingsProxyPortBuffer = String(proxySettings.preferredPort || 0)
-          return
-        }
-
-        if (state.settingsCursor === proxyCleanupRowIdx) {
-          const cleaned = cleanupOpenCodeProxyConfig()
-          state.settingsSyncStatus = {
-            type: 'success',
-            msg: `✅ Proxy cleanup done (${cleaned.removedProvider ? 'provider removed' : 'no provider found'}, ${cleaned.removedModel ? 'default model cleared' : 'default model unchanged'})`,
-          }
+        // 📖 Proxy & Daemon row: Enter → open dedicated overlay
+        if (state.settingsCursor === proxyDaemonRowIdx) {
+          state.settingsOpen = false
+          state.proxyDaemonOpen = true
+          state.proxyDaemonCursor = 0
+          state.proxyDaemonScrollOffset = 0
+          state.proxyDaemonMessage = null
+          // 📖 Refresh daemon status when entering
+          try {
+            const { getDaemonStatus: _gds } = await import('./daemon-manager.js')
+            const st = await _gds()
+            state.daemonStatus = st.status
+            state.daemonInfo = st.info || null
+          } catch { /* ignore */ }
           return
         }
 
@@ -1250,26 +1223,9 @@ export function createKeyHandler(ctx) {
       }
 
       if (key.name === 'space') {
-        if (state.settingsCursor === updateRowIdx || state.settingsCursor === proxyPortRowIdx || state.settingsCursor === proxyCleanupRowIdx || state.settingsCursor === changelogViewRowIdx) return
+        if (state.settingsCursor === updateRowIdx || state.settingsCursor === proxyDaemonRowIdx || state.settingsCursor === changelogViewRowIdx) return
         // 📖 Profile rows don't respond to Space
         if (state.settingsCursor >= profileStartIdx) return
-
-        if (state.settingsCursor === proxyEnabledRowIdx || state.settingsCursor === proxySyncRowIdx) {
-          if (!state.config.settings) state.config.settings = {}
-          state.config.settings.proxy = {
-            ...proxySettings,
-            enabled: state.settingsCursor === proxyEnabledRowIdx ? !proxySettings.enabled : proxySettings.enabled,
-            syncToOpenCode: state.settingsCursor === proxySyncRowIdx ? !proxySettings.syncToOpenCode : proxySettings.syncToOpenCode,
-          }
-          saveConfig(state.config)
-          state.settingsSyncStatus = {
-            type: 'success',
-            msg: state.settingsCursor === proxyEnabledRowIdx
-              ? `✅ Proxy mode ${state.config.settings.proxy.enabled ? 'enabled' : 'disabled'}`
-              : `✅ OpenCode proxy sync ${state.config.settings.proxy.syncToOpenCode ? 'enabled' : 'disabled'}`,
-          }
-          return
-        }
 
         // 📖 Toggle enabled/disabled for selected provider
         const pk = providerKeys[state.settingsCursor]
@@ -1281,7 +1237,7 @@ export function createKeyHandler(ctx) {
       }
 
       if (key.name === 't') {
-        if (state.settingsCursor === updateRowIdx || state.settingsCursor === proxyPortRowIdx || state.settingsCursor === proxyCleanupRowIdx || state.settingsCursor === changelogViewRowIdx) return
+        if (state.settingsCursor === updateRowIdx || state.settingsCursor === proxyDaemonRowIdx || state.settingsCursor === changelogViewRowIdx) return
         // 📖 Profile rows don't respond to T (test key)
         if (state.settingsCursor >= profileStartIdx) return
 
@@ -1387,6 +1343,249 @@ export function createKeyHandler(ctx) {
       return // 📖 Swallow all other keys while settings is open
     }
 
+    // ─── Proxy & Daemon overlay keyboard handling ─────────────────────────────
+    if (state.proxyDaemonOpen) {
+      const proxySettings = getProxySettings(state.config)
+      const ROW_PROXY_ENABLED = 0
+      const ROW_PROXY_SYNC = 1
+      const ROW_PROXY_PORT = 2
+      const ROW_PROXY_CLEANUP = 3
+      const ROW_DAEMON_INSTALL = 4
+      const ROW_DAEMON_RESTART = 5
+      const ROW_DAEMON_STOP = 6
+      const ROW_DAEMON_KILL = 7
+      const ROW_DAEMON_LOGS = 8
+
+      const daemonStatus = state.daemonStatus || 'not-installed'
+      const daemonIsInstalled = daemonStatus === 'running' || daemonStatus === 'stopped' || daemonStatus === 'unhealthy' || daemonStatus === 'stale'
+      const maxRow = daemonIsInstalled ? ROW_DAEMON_LOGS : ROW_DAEMON_INSTALL
+
+      // 📖 Port edit mode (same as old Settings behavior)
+      if (state.settingsProxyPortEditMode) {
+        if (key.name === 'return') {
+          const parsed = parseInt(state.settingsProxyPortBuffer, 10)
+          if (isNaN(parsed) || parsed < 0 || parsed > 65535) {
+            state.proxyDaemonMessage = { type: 'error', msg: '❌ Port must be 0 (auto) or 1–65535', ts: Date.now() }
+            return
+          }
+          if (!state.config.settings) state.config.settings = {}
+          state.config.settings.proxy = { ...proxySettings, preferredPort: parsed }
+          saveConfig(state.config)
+          state.settingsProxyPortEditMode = false
+          state.settingsProxyPortBuffer = ''
+          state.proxyDaemonMessage = { type: 'success', msg: `✅ Preferred port saved: ${parsed === 0 ? 'auto' : parsed}`, ts: Date.now() }
+        } else if (key.name === 'escape') {
+          state.settingsProxyPortEditMode = false
+          state.settingsProxyPortBuffer = ''
+        } else if (key.name === 'backspace') {
+          state.settingsProxyPortBuffer = state.settingsProxyPortBuffer.slice(0, -1)
+        } else if (str && /^[0-9]$/.test(str) && state.settingsProxyPortBuffer.length < 5) {
+          state.settingsProxyPortBuffer += str
+        }
+        return
+      }
+
+      // 📖 Escape → back to Settings
+      if (key.name === 'escape') {
+        state.proxyDaemonOpen = false
+        state.settingsOpen = true
+        state.settingsProxyPortEditMode = false
+        state.settingsProxyPortBuffer = ''
+        return
+      }
+
+      // 📖 Navigation
+      if (key.name === 'up' && state.proxyDaemonCursor > 0) { state.proxyDaemonCursor--; return }
+      if (key.name === 'down' && state.proxyDaemonCursor < maxRow) { state.proxyDaemonCursor++; return }
+      if (key.name === 'home') { state.proxyDaemonCursor = 0; return }
+      if (key.name === 'end') { state.proxyDaemonCursor = maxRow; return }
+      if (key.name === 'pageup') { state.proxyDaemonCursor = Math.max(0, state.proxyDaemonCursor - 5); return }
+      if (key.name === 'pagedown') { state.proxyDaemonCursor = Math.min(maxRow, state.proxyDaemonCursor + 5); return }
+
+      // 📖 Space toggles on proxy rows
+      if (key.name === 'space') {
+        if (state.proxyDaemonCursor === ROW_PROXY_ENABLED) {
+          if (!state.config.settings) state.config.settings = {}
+          state.config.settings.proxy = { ...proxySettings, enabled: !proxySettings.enabled }
+          saveConfig(state.config)
+          state.proxyDaemonMessage = { type: 'success', msg: `✅ Proxy mode ${state.config.settings.proxy.enabled ? 'enabled' : 'disabled'}`, ts: Date.now() }
+          return
+        }
+        if (state.proxyDaemonCursor === ROW_PROXY_SYNC) {
+          if (!state.config.settings) state.config.settings = {}
+          state.config.settings.proxy = { ...proxySettings, syncToOpenCode: !proxySettings.syncToOpenCode }
+          saveConfig(state.config)
+          state.proxyDaemonMessage = { type: 'success', msg: `✅ OpenCode proxy sync ${state.config.settings.proxy.syncToOpenCode ? 'enabled' : 'disabled'}`, ts: Date.now() }
+          return
+        }
+        return
+      }
+
+      // 📖 Enter on proxy rows
+      if (key.name === 'return') {
+        // 📖 Proxy enabled / sync — toggle (same as space)
+        if (state.proxyDaemonCursor === ROW_PROXY_ENABLED) {
+          if (!state.config.settings) state.config.settings = {}
+          state.config.settings.proxy = { ...proxySettings, enabled: !proxySettings.enabled }
+          saveConfig(state.config)
+          state.proxyDaemonMessage = { type: 'success', msg: `✅ Proxy mode ${state.config.settings.proxy.enabled ? 'enabled' : 'disabled'}`, ts: Date.now() }
+          return
+        }
+        if (state.proxyDaemonCursor === ROW_PROXY_SYNC) {
+          if (!state.config.settings) state.config.settings = {}
+          state.config.settings.proxy = { ...proxySettings, syncToOpenCode: !proxySettings.syncToOpenCode }
+          saveConfig(state.config)
+          state.proxyDaemonMessage = { type: 'success', msg: `✅ OpenCode proxy sync ${state.config.settings.proxy.syncToOpenCode ? 'enabled' : 'disabled'}`, ts: Date.now() }
+          return
+        }
+
+        // 📖 Port — enter edit mode
+        if (state.proxyDaemonCursor === ROW_PROXY_PORT) {
+          state.settingsProxyPortEditMode = true
+          state.settingsProxyPortBuffer = String(proxySettings.preferredPort || 0)
+          return
+        }
+
+        // 📖 Clean proxy config
+        if (state.proxyDaemonCursor === ROW_PROXY_CLEANUP) {
+          const cleaned = cleanupOpenCodeProxyConfig()
+          state.proxyDaemonMessage = {
+            type: 'success',
+            msg: `✅ Proxy cleanup done (${cleaned.removedProvider ? 'provider removed' : 'no provider found'}, ${cleaned.removedModel ? 'default model cleared' : 'default model unchanged'})`,
+            ts: Date.now(),
+          }
+          return
+        }
+
+        // 📖 Install / Uninstall daemon
+        if (state.proxyDaemonCursor === ROW_DAEMON_INSTALL) {
+          const { getDaemonStatus: _gds, installDaemon, uninstallDaemon, getPlatformSupport } = await import('./daemon-manager.js')
+          const platform = getPlatformSupport()
+          if (!platform.supported) {
+            state.proxyDaemonMessage = { type: 'warning', msg: `⚠ ${platform.reason}`, ts: Date.now() }
+            return
+          }
+          const current = await _gds()
+          if (current.status === 'not-installed') {
+            // 📖 Install daemon
+            if (!proxySettings.enabled) {
+              state.config.settings.proxy.enabled = true
+            }
+            state.config.settings.proxy.daemonEnabled = true
+            state.config.settings.proxy.daemonConsent = new Date().toISOString()
+            if (!state.config.settings.proxy.preferredPort || state.config.settings.proxy.preferredPort === 0) {
+              state.config.settings.proxy.preferredPort = 18045
+            }
+            saveConfig(state.config)
+            const result = installDaemon()
+            if (result.success) {
+              state.proxyDaemonMessage = { type: 'success', msg: '✅ Background daemon installed and started!', ts: Date.now() }
+              const ns = await _gds()
+              state.daemonStatus = ns.status
+              state.daemonInfo = ns.info || null
+            } else {
+              state.proxyDaemonMessage = { type: 'error', msg: `❌ Install failed: ${result.error}`, ts: Date.now() }
+            }
+          } else {
+            // 📖 Uninstall daemon
+            const result = uninstallDaemon()
+            state.config.settings.proxy.daemonEnabled = false
+            saveConfig(state.config)
+            if (result.success) {
+              state.proxyDaemonMessage = { type: 'success', msg: '✅ Background daemon uninstalled.', ts: Date.now() }
+              state.daemonStatus = 'not-installed'
+              state.daemonInfo = null
+            } else {
+              state.proxyDaemonMessage = { type: 'error', msg: `❌ Uninstall failed: ${result.error}`, ts: Date.now() }
+            }
+          }
+          return
+        }
+
+        // 📖 Restart daemon
+        if (state.proxyDaemonCursor === ROW_DAEMON_RESTART) {
+          const { restartDaemon, getDaemonStatus: _gds } = await import('./daemon-manager.js')
+          const result = restartDaemon()
+          if (result.success) {
+            state.proxyDaemonMessage = { type: 'success', msg: '✅ Daemon restarted.', ts: Date.now() }
+            // 📖 Wait a bit for the daemon to start up
+            setTimeout(async () => {
+              try {
+                const ns = await _gds()
+                state.daemonStatus = ns.status
+                state.daemonInfo = ns.info || null
+              } catch { /* ignore */ }
+            }, 2000)
+          } else {
+            state.proxyDaemonMessage = { type: 'error', msg: `❌ Restart failed: ${result.error}`, ts: Date.now() }
+          }
+          return
+        }
+
+        // 📖 Stop daemon (SIGTERM)
+        if (state.proxyDaemonCursor === ROW_DAEMON_STOP) {
+          const { stopDaemon, getDaemonStatus: _gds } = await import('./daemon-manager.js')
+          const result = stopDaemon()
+          if (result.success) {
+            const warning = result.willRestart ? ' (service may auto-restart it)' : ''
+            state.proxyDaemonMessage = { type: 'success', msg: `✅ Daemon stopped.${warning}`, ts: Date.now() }
+            setTimeout(async () => {
+              try {
+                const ns = await _gds()
+                state.daemonStatus = ns.status
+                state.daemonInfo = ns.info || null
+              } catch { /* ignore */ }
+            }, 1500)
+          } else {
+            state.proxyDaemonMessage = { type: 'error', msg: `❌ Stop failed: ${result.error}`, ts: Date.now() }
+          }
+          return
+        }
+
+        // 📖 Force kill daemon (SIGKILL) — emergency
+        if (state.proxyDaemonCursor === ROW_DAEMON_KILL) {
+          const { killDaemonProcess, getDaemonStatus: _gds } = await import('./daemon-manager.js')
+          const result = killDaemonProcess()
+          if (result.success) {
+            state.proxyDaemonMessage = { type: 'success', msg: '✅ Daemon force-killed (SIGKILL).', ts: Date.now() }
+            const ns = await _gds()
+            state.daemonStatus = ns.status
+            state.daemonInfo = ns.info || null
+          } else {
+            state.proxyDaemonMessage = { type: 'error', msg: `❌ Kill failed: ${result.error}`, ts: Date.now() }
+          }
+          return
+        }
+
+        // 📖 View daemon logs
+        if (state.proxyDaemonCursor === ROW_DAEMON_LOGS) {
+          const { getDaemonLogPath } = await import('./daemon-manager.js')
+          const logPath = getDaemonLogPath()
+          try {
+            const { readFileSync, existsSync } = await import('node:fs')
+            if (!existsSync(logPath)) {
+              state.proxyDaemonMessage = { type: 'warning', msg: `⚠ No log file found at ${logPath}`, ts: Date.now() }
+              return
+            }
+            const content = readFileSync(logPath, 'utf8')
+            const logLines = content.split('\n')
+            const last50 = logLines.slice(-50).join('\n')
+            // 📖 Display in the log overlay (repurpose log view)
+            state.proxyDaemonOpen = false
+            state.logVisible = true
+            state.logScrollOffset = 0
+            state._daemonLogContent = last50
+            state.proxyDaemonMessage = { type: 'success', msg: `📖 Showing last ${Math.min(50, logLines.length)} lines from ${logPath}`, ts: Date.now() }
+          } catch (err) {
+            state.proxyDaemonMessage = { type: 'error', msg: `❌ Could not read logs: ${err.message}`, ts: Date.now() }
+          }
+          return
+        }
+      }
+
+      return // 📖 Swallow all other keys while proxy/daemon overlay is open
+    }
+
     // 📖 P key: open settings screen
     if (key.name === 'p' && !key.shift) {
       state.settingsOpen = true
@@ -1397,6 +1596,13 @@ export function createKeyHandler(ctx) {
       state.settingsProxyPortBuffer = ''
       state.settingsEditBuffer = ''
       state.settingsScrollOffset = 0
+      // 📖 Refresh daemon status when opening settings
+      import('./daemon-manager.js').then(dm => {
+        dm.getDaemonStatus().then(s => {
+          state.daemonStatus = s.status
+          state.daemonInfo = s.info || null
+        }).catch(() => {})
+      }).catch(() => {})
       return
     }
 

@@ -1327,7 +1327,10 @@ describe('config profile functions', () => {
     assert.equal(settings.sortAsc, true)
     assert.equal(settings.pingInterval, 10000)
     assert.equal(settings.hideUnconfiguredModels, true)
-    assert.deepEqual(settings.proxy, { enabled: false, syncToOpenCode: false, preferredPort: 0 })
+    assert.equal(settings.proxy.enabled, false)
+    assert.equal(settings.proxy.syncToOpenCode, false)
+    assert.equal(settings.proxy.preferredPort, 0)
+    assert.ok(settings.proxy.stableToken.startsWith('fcm_'))
   })
 
   it('listProfiles returns empty array for fresh config', () => {
@@ -1358,7 +1361,9 @@ describe('config profile functions', () => {
   it('saveAsProfile can persist proxy settings', () => {
     const config = mockConfig()
     saveAsProfile(config, 'proxy', { proxy: { enabled: true, syncToOpenCode: true, preferredPort: 8045 } })
-    assert.deepEqual(config.profiles.proxy.settings.proxy, { enabled: true, syncToOpenCode: true, preferredPort: 8045 })
+    assert.equal(config.profiles.proxy.settings.proxy.enabled, true)
+    assert.equal(config.profiles.proxy.settings.proxy.syncToOpenCode, true)
+    assert.equal(config.profiles.proxy.settings.proxy.preferredPort, 8045)
   })
 
   it('loadProfile returns settings and sets activeProfile', () => {
@@ -1457,13 +1462,26 @@ describe('config profile functions', () => {
   })
 
   it('normalizes proxy settings to disabled-by-default', () => {
-    assert.deepEqual(normalizeProxySettings(), { enabled: false, syncToOpenCode: false, preferredPort: 0 })
-    assert.deepEqual(getProxySettings({ settings: {} }), { enabled: false, syncToOpenCode: false, preferredPort: 0 })
-    assert.deepEqual(getProxySettings({ settings: { proxy: { enabled: true, syncToOpenCode: true, preferredPort: 8123 } } }), {
-      enabled: true,
-      syncToOpenCode: true,
-      preferredPort: 8123,
-    })
+    const defaults = normalizeProxySettings()
+    assert.equal(defaults.enabled, false)
+    assert.equal(defaults.syncToOpenCode, false)
+    assert.equal(defaults.preferredPort, 0)
+    assert.equal(defaults.daemonEnabled, false)
+    assert.equal(defaults.daemonConsent, null)
+    // 📖 stableToken is auto-generated if missing — just verify it exists and has the right prefix
+    assert.ok(typeof defaults.stableToken === 'string' && defaults.stableToken.startsWith('fcm_'))
+
+    const fromEmpty = getProxySettings({ settings: {} })
+    assert.equal(fromEmpty.enabled, false)
+    assert.equal(fromEmpty.syncToOpenCode, false)
+    assert.equal(fromEmpty.preferredPort, 0)
+    assert.ok(fromEmpty.stableToken.startsWith('fcm_'))
+
+    const explicit = getProxySettings({ settings: { proxy: { enabled: true, syncToOpenCode: true, preferredPort: 8123, stableToken: 'fcm_mytoken' } } })
+    assert.equal(explicit.enabled, true)
+    assert.equal(explicit.syncToOpenCode, true)
+    assert.equal(explicit.preferredPort, 8123)
+    assert.equal(explicit.stableToken, 'fcm_mytoken')
   })
 
   it('defaults configured-only mode and preferred tool mode in profile settings', () => {
@@ -1790,5 +1808,230 @@ describe('Dynamic OpenRouter MODELS mutation', () => {
     // Remove it
     MODELS.splice(MODELS.length - 1, 1)
     assert.equal(MODELS.length, originalLength)
+  })
+})
+
+// ─── Anthropic Translator ─────────────────────────────────────────────────────
+// 📖 Tests for bidirectional Anthropic ↔ OpenAI wire format translation
+
+import { translateAnthropicToOpenAI, translateOpenAIToAnthropic } from '../src/anthropic-translator.js'
+
+describe('Anthropic Translator', () => {
+  it('translates simple Anthropic request to OpenAI format', () => {
+    const anthropic = {
+      model: 'deepseek-v3',
+      system: 'You are a helpful assistant.',
+      messages: [{ role: 'user', content: 'Hello' }],
+      max_tokens: 1024,
+      stream: false,
+    }
+    const openai = translateAnthropicToOpenAI(anthropic)
+    assert.equal(openai.model, 'deepseek-v3')
+    assert.equal(openai.max_tokens, 1024)
+    assert.equal(openai.stream, false)
+    assert.equal(openai.messages.length, 2) // system + user
+    assert.equal(openai.messages[0].role, 'system')
+    assert.equal(openai.messages[0].content, 'You are a helpful assistant.')
+    assert.equal(openai.messages[1].role, 'user')
+    assert.equal(openai.messages[1].content, 'Hello')
+  })
+
+  it('translates Anthropic system as array of content blocks', () => {
+    const anthropic = {
+      model: 'test',
+      system: [{ type: 'text', text: 'Part 1' }, { type: 'text', text: 'Part 2' }],
+      messages: [{ role: 'user', content: 'Hi' }],
+    }
+    const openai = translateAnthropicToOpenAI(anthropic)
+    assert.equal(openai.messages[0].role, 'system')
+    assert.equal(openai.messages[0].content, 'Part 1\n\nPart 2')
+  })
+
+  it('translates Anthropic content blocks to OpenAI messages', () => {
+    const anthropic = {
+      model: 'test',
+      messages: [{
+        role: 'user',
+        content: [{ type: 'text', text: 'What is 2+2?' }]
+      }],
+    }
+    const openai = translateAnthropicToOpenAI(anthropic)
+    assert.equal(openai.messages[0].content, 'What is 2+2?')
+  })
+
+  it('maps Anthropic tools to OpenAI function tools', () => {
+    const anthropic = {
+      model: 'test',
+      messages: [{ role: 'user', content: 'Use a tool' }],
+      tools: [{
+        name: 'read_file',
+        description: 'Read a file from disk',
+        input_schema: { type: 'object', properties: { path: { type: 'string' } } }
+      }],
+    }
+    const openai = translateAnthropicToOpenAI(anthropic)
+    assert.equal(openai.tools.length, 1)
+    assert.equal(openai.tools[0].type, 'function')
+    assert.equal(openai.tools[0].function.name, 'read_file')
+  })
+
+  it('translates OpenAI response to Anthropic format', () => {
+    const openai = {
+      id: 'chatcmpl-123',
+      choices: [{
+        message: { role: 'assistant', content: 'Hello! How can I help?' },
+        finish_reason: 'stop',
+      }],
+      usage: { prompt_tokens: 10, completion_tokens: 8 },
+    }
+    const anthropic = translateOpenAIToAnthropic(openai, 'deepseek-v3')
+    assert.equal(anthropic.type, 'message')
+    assert.equal(anthropic.role, 'assistant')
+    assert.equal(anthropic.content.length, 1)
+    assert.equal(anthropic.content[0].type, 'text')
+    assert.equal(anthropic.content[0].text, 'Hello! How can I help?')
+    assert.equal(anthropic.stop_reason, 'end_turn')
+    assert.equal(anthropic.usage.input_tokens, 10)
+    assert.equal(anthropic.usage.output_tokens, 8)
+    assert.equal(anthropic.model, 'deepseek-v3')
+  })
+
+  it('translates tool_calls finish_reason to tool_use stop_reason', () => {
+    const openai = {
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{ id: 'tc_1', function: { name: 'read_file', arguments: '{"path":"test.js"}' } }]
+        },
+        finish_reason: 'tool_calls',
+      }],
+      usage: { prompt_tokens: 5, completion_tokens: 15 },
+    }
+    const anthropic = translateOpenAIToAnthropic(openai, 'test')
+    assert.equal(anthropic.stop_reason, 'tool_use')
+    assert.equal(anthropic.content.length, 1) // tool_use block
+    assert.equal(anthropic.content[0].type, 'tool_use')
+    assert.equal(anthropic.content[0].name, 'read_file')
+    assert.deepEqual(anthropic.content[0].input, { path: 'test.js' })
+  })
+
+  it('maps stop_sequences from Anthropic to OpenAI stop param', () => {
+    const openai = translateAnthropicToOpenAI({
+      model: 'test',
+      messages: [{ role: 'user', content: 'Hi' }],
+      stop_sequences: ['</answer>', '\n\nHuman:']
+    })
+    assert.deepEqual(openai.stop, ['</answer>', '\n\nHuman:'])
+  })
+})
+
+// ─── Proxy Topology ────────────────────────────────────────────────────────────
+// 📖 Tests for shared proxy topology builder
+
+import { buildProxyTopologyFromConfig } from '../src/proxy-topology.js'
+
+describe('Proxy Topology', () => {
+  it('builds empty topology with no API keys', () => {
+    const mergedModels = [{
+      slug: 'test-model',
+      label: 'Test Model',
+      providers: [{ providerKey: 'nvidia', modelId: 'nvidia/test' }],
+    }]
+    const sourcesMap = { nvidia: { url: 'https://api.nvidia.com/v1/chat/completions' } }
+    const { accounts, proxyModels } = buildProxyTopologyFromConfig({ apiKeys: {} }, mergedModels, sourcesMap)
+    assert.equal(accounts.length, 0)
+    assert.equal(Object.keys(proxyModels).length, 1)
+    assert.equal(proxyModels['test-model'].name, 'Test Model')
+  })
+
+  it('builds accounts from configured API keys', () => {
+    const mergedModels = [{
+      slug: 'deepseek-v3',
+      label: 'DeepSeek V3',
+      providers: [{ providerKey: 'nvidia', modelId: 'nvidia/deepseek-v3' }],
+    }]
+    const sourcesMap = { nvidia: { url: 'https://integrate.api.nvidia.com/v1/chat/completions' } }
+    const config = { apiKeys: { nvidia: 'nvapi-test' } }
+    const { accounts } = buildProxyTopologyFromConfig(config, mergedModels, sourcesMap)
+    assert.equal(accounts.length, 1)
+    assert.equal(accounts[0].id, 'nvidia/deepseek-v3/0')
+    assert.equal(accounts[0].apiKey, 'nvapi-test')
+    assert.equal(accounts[0].url, 'https://integrate.api.nvidia.com/v1')
+  })
+
+  it('creates multiple accounts for multi-key providers', () => {
+    const mergedModels = [{
+      slug: 'test',
+      label: 'Test',
+      providers: [{ providerKey: 'nvidia', modelId: 'nvidia/test' }],
+    }]
+    const sourcesMap = { nvidia: { url: 'https://api.nvidia.com/v1/chat/completions' } }
+    const config = { apiKeys: { nvidia: ['key1', 'key2', 'key3'] } }
+    const { accounts } = buildProxyTopologyFromConfig(config, mergedModels, sourcesMap)
+    assert.equal(accounts.length, 3)
+    assert.equal(accounts[0].apiKey, 'key1')
+    assert.equal(accounts[2].apiKey, 'key3')
+  })
+})
+
+// ─── Daemon Manager ──────────────────────────────────────────────────────────
+describe('Daemon Manager', () => {
+  it('getPlatformSupport returns supported for darwin or linux', async () => {
+    const { getPlatformSupport } = await import('../src/daemon-manager.js')
+    const result = getPlatformSupport()
+    if (process.platform === 'darwin') {
+      assert.equal(result.supported, true)
+      assert.equal(result.platform, 'macos')
+    } else if (process.platform === 'linux') {
+      assert.equal(result.supported, true)
+      assert.equal(result.platform, 'linux')
+    }
+  })
+
+  it('installDaemon blocks in dev environment (has .git)', async () => {
+    const { installDaemon } = await import('../src/daemon-manager.js')
+    const result = installDaemon()
+    // 📖 Since we're running from the repo (has .git), install should be blocked
+    assert.equal(result.success, false)
+    assert.ok(result.error.includes('dev checkout'))
+  })
+
+  it('getDaemonInfo returns null when no daemon.json exists', async () => {
+    const { getDaemonInfo } = await import('../src/daemon-manager.js')
+    // 📖 In test environment daemon.json shouldn't exist
+    const info = getDaemonInfo()
+    // 📖 Could be null or an object if daemon is actually running — just check type
+    assert.ok(info === null || typeof info === 'object')
+  })
+
+  it('stopDaemon returns error when no daemon running', async () => {
+    const { stopDaemon, getDaemonInfo } = await import('../src/daemon-manager.js')
+    // 📖 Only test when daemon is NOT running (don't kill real daemons)
+    const info = getDaemonInfo()
+    if (!info) {
+      const result = stopDaemon()
+      assert.equal(result.success, false)
+      assert.ok(result.error.includes('No daemon'))
+    }
+  })
+
+  it('killDaemonProcess returns error when no daemon PID found', async () => {
+    const { killDaemonProcess, getDaemonInfo } = await import('../src/daemon-manager.js')
+    const info = getDaemonInfo()
+    if (!info) {
+      const result = killDaemonProcess()
+      assert.equal(result.success, false)
+      assert.ok(result.error.includes('No daemon'))
+    }
+  })
+
+  it('getVersionMismatch returns null when no daemon running', async () => {
+    const { getVersionMismatch, getDaemonInfo } = await import('../src/daemon-manager.js')
+    const info = getDaemonInfo()
+    if (!info) {
+      const result = getVersionMismatch()
+      assert.equal(result, null)
+    }
   })
 })

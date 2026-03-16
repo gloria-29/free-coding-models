@@ -199,6 +199,80 @@ async function main() {
     process.exit(0)
   }
 
+  // 📖 CLI subcommand: free-coding-models daemon <action>
+  const daemonSubcmd = process.argv[2] === 'daemon' ? (process.argv[3] || 'status') : null
+  if (daemonSubcmd) {
+    const dm = await import('../src/daemon-manager.js')
+    if (daemonSubcmd === 'status') {
+      const s = await dm.getDaemonStatus()
+      console.log()
+      if (s.status === 'running') {
+        console.log(chalk.greenBright(`  📡 FCM Daemon: Running`))
+        console.log(chalk.dim(`  PID: ${s.info.pid}  •  Port: ${s.info.port}  •  Accounts: ${s.info.accountCount}  •  Version: ${s.info.version}`))
+        console.log(chalk.dim(`  Started: ${s.info.startedAt}`))
+      } else if (s.status === 'stopped') {
+        console.log(chalk.yellow(`  📡 FCM Daemon: Stopped (service installed but not running)`))
+      } else if (s.status === 'stale') {
+        console.log(chalk.red(`  📡 FCM Daemon: Stale (crashed — PID ${s.info?.pid} no longer alive)`))
+      } else if (s.status === 'unhealthy') {
+        console.log(chalk.red(`  📡 FCM Daemon: Unhealthy (PID alive but health check failed)`))
+      } else {
+        console.log(chalk.dim(`  📡 FCM Daemon: Not installed`))
+        console.log(chalk.dim(`  Install via: free-coding-models daemon install`))
+      }
+      console.log()
+      process.exit(0)
+    }
+    if (daemonSubcmd === 'install') {
+      const result = dm.installDaemon()
+      console.log()
+      if (result.success) {
+        console.log(chalk.greenBright('  ✅ Background daemon installed and started!'))
+        console.log(chalk.dim('  The proxy will now run automatically at login.'))
+      } else {
+        console.log(chalk.red(`  ❌ Install failed: ${result.error}`))
+      }
+      console.log()
+      process.exit(result.success ? 0 : 1)
+    }
+    if (daemonSubcmd === 'uninstall') {
+      const result = dm.uninstallDaemon()
+      console.log()
+      if (result.success) {
+        console.log(chalk.greenBright('  ✅ Background daemon uninstalled.'))
+      } else {
+        console.log(chalk.red(`  ❌ Uninstall failed: ${result.error}`))
+      }
+      console.log()
+      process.exit(result.success ? 0 : 1)
+    }
+    if (daemonSubcmd === 'restart') {
+      const result = dm.restartDaemon()
+      console.log()
+      if (result.success) {
+        console.log(chalk.greenBright('  ✅ Daemon restarted.'))
+      } else {
+        console.log(chalk.red(`  ❌ Restart failed: ${result.error}`))
+      }
+      console.log()
+      process.exit(result.success ? 0 : 1)
+    }
+    if (daemonSubcmd === 'logs') {
+      const logPath = dm.getDaemonLogPath()
+      console.log(chalk.dim(`  Log file: ${logPath}`))
+      try {
+        const { execSync } = await import('child_process')
+        execSync(`tail -50 "${logPath}"`, { stdio: 'inherit' })
+      } catch {
+        console.log(chalk.dim('  (no logs yet)'))
+      }
+      process.exit(0)
+    }
+    console.log(chalk.red(`  Unknown daemon command: ${daemonSubcmd}`))
+    console.log(chalk.dim('  Usage: free-coding-models daemon [status|install|uninstall|restart|logs]'))
+    process.exit(1)
+  }
+
   // 📖 If --profile <name> was passed, load that profile into the live config
   let startupProfileSettings = null
   if (cliArgs.profileName) {
@@ -396,6 +470,13 @@ async function main() {
     settingsUpdateError: null,    // 📖 Last update-check error message for maintenance row
     settingsProxyPortEditMode: false, // 📖 Whether Settings is editing the preferred proxy port field.
     settingsProxyPortBuffer: '',  // 📖 Inline input buffer for the preferred proxy port (0 = auto).
+    daemonStatus: 'not-installed', // 📖 Background daemon status: 'running'|'stopped'|'stale'|'unhealthy'|'not-installed'
+    daemonInfo: null,             // 📖 daemon.json contents when daemon is running
+    // 📖 Proxy & Daemon overlay state (opened from Settings)
+    proxyDaemonOpen: false,       // 📖 Whether the dedicated Proxy & Daemon overlay is active
+    proxyDaemonCursor: 0,         // 📖 Selected row in the proxy/daemon overlay
+    proxyDaemonScrollOffset: 0,   // 📖 Vertical scroll offset for the proxy/daemon overlay
+    proxyDaemonMessage: null,     // 📖 Feedback message { type: 'success'|'warning'|'error', msg: string, ts: number }
     config,                       // 📖 Live reference to the config object (updated on save)
     visibleSorted: [],            // 📖 Cached visible+sorted models — shared between render loop and key handlers
     helpVisible: false,           // 📖 Whether the help overlay (K key) is active
@@ -788,12 +869,14 @@ async function main() {
     refreshAutoPingMode()
     state.frame++
     // 📖 Cache visible+sorted models each frame so Enter handler always matches the display
-    if (!state.settingsOpen && !state.installEndpointsOpen && !state.recommendOpen && !state.featureRequestOpen && !state.bugReportOpen && !state.changelogOpen) {
+    if (!state.settingsOpen && !state.installEndpointsOpen && !state.recommendOpen && !state.featureRequestOpen && !state.bugReportOpen && !state.changelogOpen && !state.proxyDaemonOpen) {
       const visible = state.results.filter(r => !r.hidden)
       state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
     }
     const content = state.settingsOpen
       ? overlays.renderSettings()
+      : state.proxyDaemonOpen
+        ? overlays.renderProxyDaemon()
       : state.installEndpointsOpen
         ? overlays.renderInstallEndpoints()
       : state.recommendOpen

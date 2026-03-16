@@ -21,6 +21,11 @@ import { classifyError } from './error-classifier.js'
 import { applyThinkingBudget, compressContext } from './request-transformer.js'
 import { TokenStats } from './token-stats.js'
 import { createHash } from 'node:crypto'
+import {
+  translateAnthropicToOpenAI,
+  translateOpenAIToAnthropic,
+  createAnthropicSSETransformer,
+} from './anthropic-translator.js'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -173,6 +178,11 @@ export class ProxyServer {
   // ── Request routing ────────────────────────────────────────────────────────
 
   _handleRequest(req, res) {
+    // 📖 Health endpoint is unauthenticated so external monitors can probe it
+    if (req.method === 'GET' && req.url === '/v1/health') {
+      return this._handleHealth(res)
+    }
+
     if (!this._isAuthorized(req)) {
       return sendJson(res, 401, { error: 'Unauthorized' })
     }
@@ -181,6 +191,11 @@ export class ProxyServer {
       this._handleModels(res)
     } else if (req.method === 'POST' && req.url === '/v1/chat/completions') {
       this._handleChatCompletions(req, res).catch(err => {
+        sendJson(res, 500, { error: 'Internal server error', message: err.message })
+      })
+    } else if (req.method === 'POST' && req.url === '/v1/messages') {
+      // 📖 Anthropic Messages API translation — enables Claude Code compatibility
+      this._handleAnthropicMessages(req, res).catch(err => {
         sendJson(res, 500, { error: 'Internal server error', message: err.message })
       })
     } else if (req.method === 'POST' && (req.url === '/v1/completions' || req.url === '/v1/responses')) {
@@ -589,5 +604,372 @@ export class ProxyServer {
       ...(account.providerKey !== undefined && { providerKey: account.providerKey }),
       ...(account.modelId !== undefined && { modelId: account.modelId }),
     })
+  }
+
+  // ── GET /v1/health ──────────────────────────────────────────────────────────
+
+  /**
+   * 📖 Health endpoint for daemon liveness checks. Unauthenticated so external
+   * monitors (TUI, launchctl, systemd) can probe without needing the token.
+   */
+  _handleHealth(res) {
+    const status = this.getStatus()
+    sendJson(res, 200, {
+      status: 'ok',
+      uptime: process.uptime(),
+      port: status.port,
+      accountCount: status.accountCount,
+      running: status.running,
+    })
+  }
+
+  // ── POST /v1/messages (Anthropic translation) ──────────────────────────────
+
+  /**
+   * 📖 Handle Anthropic Messages API requests by translating to OpenAI format,
+   * forwarding through the existing chat completions handler, then translating
+   * the response back to Anthropic format.
+   *
+   * 📖 This makes Claude Code work natively through the FCM proxy.
+   */
+  async _handleAnthropicMessages(clientReq, clientRes) {
+    const rawBody = await readBody(clientReq)
+    let anthropicBody
+    try {
+      anthropicBody = JSON.parse(rawBody)
+    } catch {
+      return sendJson(clientRes, 400, { error: { type: 'invalid_request_error', message: 'Invalid JSON body' } })
+    }
+
+    // 📖 Translate Anthropic → OpenAI
+    const openaiBody = translateAnthropicToOpenAI(anthropicBody)
+    const isStreaming = openaiBody.stream === true
+
+    if (isStreaming) {
+      // 📖 Streaming mode: pipe through SSE transformer
+      await this._handleAnthropicMessagesStreaming(openaiBody, anthropicBody.model, clientRes)
+    } else {
+      // 📖 JSON mode: forward, translate response, return
+      await this._handleAnthropicMessagesJson(openaiBody, anthropicBody.model, clientRes)
+    }
+  }
+
+  /**
+   * 📖 Handle non-streaming Anthropic Messages by internally dispatching to
+   * chat completions logic and translating the JSON response back.
+   */
+  async _handleAnthropicMessagesJson(openaiBody, requestModel, clientRes) {
+    // 📖 Create a fake request/response pair to capture the OpenAI response
+    const capturedChunks = []
+    let capturedStatusCode = 200
+    let capturedHeaders = {}
+
+    const fakeRes = {
+      headersSent: false,
+      writeHead(statusCode, headers) {
+        capturedStatusCode = statusCode
+        capturedHeaders = headers || {}
+        this.headersSent = true
+      },
+      write(chunk) { capturedChunks.push(chunk) },
+      end(data) {
+        if (data) capturedChunks.push(data)
+      },
+      on() { return this },
+      once() { return this },
+      emit() { return false },
+    }
+
+    // 📖 Build a fake IncomingMessage-like with pre-parsed body
+    const fakeReq = {
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      on(event, cb) {
+        if (event === 'data') cb(Buffer.from(JSON.stringify(openaiBody)))
+        if (event === 'end') cb()
+        return this
+      },
+      removeListener() { return this },
+    }
+
+    // 📖 Use internal handler directly instead of fake request
+    await this._handleChatCompletionsInternal(openaiBody, fakeRes)
+
+    const responseBody = capturedChunks.join('')
+
+    if (capturedStatusCode >= 200 && capturedStatusCode < 300) {
+      try {
+        const openaiResponse = JSON.parse(responseBody)
+        const anthropicResponse = translateOpenAIToAnthropic(openaiResponse, requestModel)
+        sendJson(clientRes, 200, anthropicResponse)
+      } catch {
+        // 📖 Couldn't parse — forward raw
+        sendJson(clientRes, capturedStatusCode, responseBody)
+      }
+    } else {
+      // 📖 Error — wrap in Anthropic error format
+      sendJson(clientRes, capturedStatusCode, {
+        type: 'error',
+        error: { type: 'api_error', message: responseBody },
+      })
+    }
+  }
+
+  /**
+   * 📖 Handle streaming Anthropic Messages by forwarding as streaming OpenAI
+   * chat completions and piping through the SSE translator.
+   */
+  async _handleAnthropicMessagesStreaming(openaiBody, requestModel, clientRes) {
+    // 📖 We need to intercept the SSE response and translate it
+    const { transform, getUsage } = createAnthropicSSETransformer(requestModel)
+
+    let resolveForward
+    const forwardPromise = new Promise(r => { resolveForward = r })
+
+    const fakeRes = {
+      headersSent: false,
+      writeHead(statusCode, headers) {
+        this.headersSent = true
+        if (statusCode >= 200 && statusCode < 300) {
+          // 📖 Write Anthropic SSE headers
+          clientRes.writeHead(200, {
+            'content-type': 'text/event-stream',
+            'cache-control': 'no-cache',
+            'connection': 'keep-alive',
+          })
+        } else {
+          clientRes.writeHead(statusCode, headers)
+        }
+      },
+      write(chunk) { /* SSE data handled via pipe */ },
+      end(data) {
+        if (data && !this.headersSent) {
+          // 📖 Non-streaming error response
+          clientRes.end(data)
+        }
+        resolveForward()
+      },
+      on() { return this },
+      once() { return this },
+      emit() { return false },
+    }
+
+    // 📖 Actually we need to pipe the upstream SSE through our transformer.
+    // 📖 The simplest approach: use _handleChatCompletionsInternal with stream=true
+    // 📖 and capture the piped response through our transformer.
+
+    // 📖 For streaming, we go lower level — use the retry loop directly
+    await this._handleAnthropicStreamDirect(openaiBody, requestModel, clientRes, transform)
+  }
+
+  /**
+   * 📖 Direct streaming handler for Anthropic messages.
+   * 📖 Runs the retry loop, pipes upstream SSE through the Anthropic transformer.
+   */
+  async _handleAnthropicStreamDirect(openaiBody, requestModel, clientRes, sseTransform) {
+    const { createHash: _createHash } = await import('node:crypto')
+    const fingerprint = _createHash('sha256')
+      .update(JSON.stringify(openaiBody.messages?.slice(-1) ?? []))
+      .digest('hex')
+      .slice(0, 16)
+
+    const requestedModel = typeof openaiBody.model === 'string'
+      ? openaiBody.model.replace(/^fcm-proxy\//, '')
+      : undefined
+
+    if (requestedModel && !this._accountManager.hasAccountsForModel(requestedModel)) {
+      return sendJson(clientRes, 404, {
+        type: 'error',
+        error: { type: 'not_found_error', message: `Model '${requestedModel}' is not available.` },
+      })
+    }
+
+    // 📖 Pipe the transform to client
+    sseTransform.pipe(clientRes)
+
+    for (let attempt = 0; attempt < this._retries; attempt++) {
+      const selectOpts = attempt === 0
+        ? { sessionFingerprint: fingerprint, requestedModel }
+        : { requestedModel }
+      const account = this._accountManager.selectAccount(selectOpts)
+      if (!account) break
+
+      const result = await this._forwardRequestForAnthropicStream(account, openaiBody, sseTransform, clientRes)
+
+      if (result.done) return
+
+      const { statusCode, responseBody, responseHeaders, networkError } = result
+      const classified = classifyError(
+        networkError ? 0 : statusCode,
+        responseBody || '',
+        responseHeaders || {}
+      )
+      this._accountManager.recordFailure(account.id, classified, { providerKey: account.providerKey })
+      if (!classified.shouldRetry) {
+        sseTransform.end()
+        return sendJson(clientRes, statusCode || 500, {
+          type: 'error',
+          error: { type: 'api_error', message: responseBody || 'Upstream error' },
+        })
+      }
+    }
+
+    sseTransform.end()
+    sendJson(clientRes, 503, {
+      type: 'error',
+      error: { type: 'overloaded_error', message: 'All accounts exhausted or unavailable' },
+    })
+  }
+
+  /**
+   * 📖 Forward a streaming request to upstream and pipe SSE through transform.
+   */
+  _forwardRequestForAnthropicStream(account, body, sseTransform, clientRes) {
+    return new Promise(resolve => {
+      const newBody = { ...body, model: account.modelId, stream: true }
+      const bodyStr = JSON.stringify(newBody)
+      const baseUrl = account.url.replace(/\/$/, '')
+      const upstreamUrl = new URL(baseUrl + '/chat/completions')
+      const client = selectClient(account.url)
+      const startTime = Date.now()
+
+      const requestOptions = {
+        hostname: upstreamUrl.hostname,
+        port: upstreamUrl.port || (upstreamUrl.protocol === 'https:' ? 443 : 80),
+        path: upstreamUrl.pathname + (upstreamUrl.search || ''),
+        method: 'POST',
+        headers: {
+          'authorization': `Bearer ${account.apiKey}`,
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(bodyStr),
+        },
+      }
+
+      const upstreamReq = client.request(requestOptions, upstreamRes => {
+        const { statusCode } = upstreamRes
+
+        if (statusCode >= 200 && statusCode < 300) {
+          // 📖 Write Anthropic SSE headers if not already sent
+          if (!clientRes.headersSent) {
+            clientRes.writeHead(200, {
+              'content-type': 'text/event-stream',
+              'cache-control': 'no-cache',
+            })
+          }
+
+          // 📖 Pipe upstream SSE through Anthropic translator
+          upstreamRes.pipe(sseTransform, { end: true })
+
+          upstreamRes.on('end', () => {
+            this._accountManager.recordSuccess(account.id, Date.now() - startTime)
+          })
+
+          clientRes.on('close', () => {
+            if (!upstreamRes.destroyed) upstreamRes.destroy()
+            if (!upstreamReq.destroyed) upstreamReq.destroy()
+          })
+
+          resolve({ done: true })
+        } else {
+          const chunks = []
+          upstreamRes.on('data', chunk => chunks.push(chunk))
+          upstreamRes.on('end', () => {
+            resolve({
+              done: false,
+              statusCode,
+              responseBody: Buffer.concat(chunks).toString(),
+              responseHeaders: upstreamRes.headers,
+              networkError: false,
+            })
+          })
+        }
+      })
+
+      upstreamReq.on('error', err => {
+        resolve({
+          done: false,
+          statusCode: 0,
+          responseBody: err.message,
+          responseHeaders: {},
+          networkError: true,
+        })
+      })
+
+      upstreamReq.setTimeout(this._upstreamTimeoutMs, () => {
+        upstreamReq.destroy(new Error(`Upstream request timed out after ${this._upstreamTimeoutMs}ms`))
+      })
+
+      upstreamReq.write(bodyStr)
+      upstreamReq.end()
+    })
+  }
+
+  /**
+   * 📖 Internal version of chat completions handler that takes a pre-parsed body.
+   * 📖 Used by the Anthropic JSON translation path to avoid re-parsing.
+   */
+  async _handleChatCompletionsInternal(body, clientRes) {
+    // 📖 Reuse the exact same logic as _handleChatCompletions but with pre-parsed body
+    if (this._compressionOpts && Array.isArray(body.messages)) {
+      body = { ...body, messages: compressContext(body.messages, this._compressionOpts) }
+    }
+    if (this._thinkingConfig) {
+      body = applyThinkingBudget(body, this._thinkingConfig)
+    }
+
+    const fingerprint = createHash('sha256')
+      .update(JSON.stringify(body.messages?.slice(-1) ?? []))
+      .digest('hex')
+      .slice(0, 16)
+
+    const requestedModel = typeof body.model === 'string'
+      ? body.model.replace(/^fcm-proxy\//, '')
+      : undefined
+
+    if (requestedModel && !this._accountManager.hasAccountsForModel(requestedModel)) {
+      return sendJson(clientRes, 404, {
+        error: 'Model not found',
+        message: `Model '${requestedModel}' is not available.`,
+      })
+    }
+
+    for (let attempt = 0; attempt < this._retries; attempt++) {
+      const selectOpts = attempt === 0
+        ? { sessionFingerprint: fingerprint, requestedModel }
+        : { requestedModel }
+      const account = this._accountManager.selectAccount(selectOpts)
+      if (!account) break
+
+      const result = await this._forwardRequest(account, body, clientRes, { requestedModel })
+      if (result.done) return
+
+      const { statusCode, responseBody, responseHeaders, networkError } = result
+      const classified = classifyError(
+        networkError ? 0 : statusCode,
+        responseBody || '',
+        responseHeaders || {}
+      )
+      this._accountManager.recordFailure(account.id, classified, { providerKey: account.providerKey })
+      if (!classified.shouldRetry) {
+        return sendJson(clientRes, statusCode || 500, responseBody || JSON.stringify({ error: 'Upstream error' }))
+      }
+    }
+
+    sendJson(clientRes, 503, { error: 'All accounts exhausted or unavailable' })
+  }
+
+  // ── Hot-reload accounts ─────────────────────────────────────────────────────
+
+  /**
+   * 📖 Atomically swap the account list and rebuild the AccountManager.
+   * 📖 Used by the daemon when config changes (new API keys, providers toggled).
+   * 📖 In-flight requests on old accounts will finish naturally.
+   *
+   * @param {Array} accounts — new account list
+   */
+  updateAccounts(accounts) {
+    this._accounts = accounts
+    this._accountManager = new AccountManager(accounts, {})
   }
 }

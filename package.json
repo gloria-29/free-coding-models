@@ -36,7 +36,8 @@
   "type": "module",
   "main": "bin/free-coding-models.js",
   "bin": {
-    "free-coding-models": "./bin/free-coding-models.js"
+    "free-coding-models": "./bin/free-coding-models.js",
+    "fcm-proxy-daemon": "./bin/fcm-proxy-daemon.js"
   },
   "files": [
     "bin/",

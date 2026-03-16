@@ -138,11 +138,8 @@ export function createOverlayRenderers(state, deps) {
   function renderSettings() {
     const providerKeys = Object.keys(sources)
     const updateRowIdx = providerKeys.length
-    const proxyEnabledRowIdx = updateRowIdx + 1
-    const proxySyncRowIdx = updateRowIdx + 2
-    const proxyPortRowIdx = updateRowIdx + 3
-    const proxyCleanupRowIdx = updateRowIdx + 4
-    const changelogViewRowIdx = updateRowIdx + 5
+    const proxyDaemonRowIdx = updateRowIdx + 1
+    const changelogViewRowIdx = updateRowIdx + 2
     const proxySettings = getProxySettings(state.config)
     const EL = '\x1b[K'
     const lines = []
@@ -273,33 +270,23 @@ export function createOverlayRenderers(state, deps) {
       lines.push(chalk.red(`      ${state.settingsUpdateError}`))
     }
 
+    // 📖 Proxy & Daemon — single row that opens a dedicated overlay
     lines.push('')
-    lines.push(`  ${chalk.bold('🔀 Proxy')}`)
+    lines.push(`  ${chalk.bold('📡 Proxy & Daemon')}`)
     lines.push(`  ${chalk.dim('  ' + '─'.repeat(separatorWidth))}`)
     lines.push('')
 
-    const proxyEnabledBullet = state.settingsCursor === proxyEnabledRowIdx ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-    const proxyEnabledRow = `${proxyEnabledBullet}${chalk.bold('Proxy mode (opt-in)').padEnd(44)} ${proxySettings.enabled ? chalk.greenBright('Enabled') : chalk.dim('Disabled by default')}`
-    cursorLineByRow[proxyEnabledRowIdx] = lines.length
-    lines.push(state.settingsCursor === proxyEnabledRowIdx ? chalk.bgRgb(20, 45, 60)(proxyEnabledRow) : proxyEnabledRow)
-
-    const proxySyncBullet = state.settingsCursor === proxySyncRowIdx ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-    const proxySyncRow = `${proxySyncBullet}${chalk.bold('Persist proxy in OpenCode').padEnd(44)} ${proxySettings.syncToOpenCode ? chalk.greenBright('Enabled') : chalk.dim('Disabled')}`
-    cursorLineByRow[proxySyncRowIdx] = lines.length
-    lines.push(state.settingsCursor === proxySyncRowIdx ? chalk.bgRgb(20, 45, 60)(proxySyncRow) : proxySyncRow)
-
-    const proxyPortBullet = state.settingsCursor === proxyPortRowIdx ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-    const proxyPortValue = state.settingsProxyPortEditMode && state.settingsCursor === proxyPortRowIdx
-      ? chalk.cyanBright(`${state.settingsProxyPortBuffer}▏`)
-      : (proxySettings.preferredPort === 0 ? chalk.dim('auto (OS-assigned)') : chalk.green(String(proxySettings.preferredPort)))
-    const proxyPortRow = `${proxyPortBullet}${chalk.bold('Preferred proxy port').padEnd(44)} ${proxyPortValue}`
-    cursorLineByRow[proxyPortRowIdx] = lines.length
-    lines.push(state.settingsCursor === proxyPortRowIdx ? chalk.bgRgb(20, 45, 60)(proxyPortRow) : proxyPortRow)
-
-    const proxyCleanupBullet = state.settingsCursor === proxyCleanupRowIdx ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-    const proxyCleanupRow = `${proxyCleanupBullet}${chalk.bold('Clean OpenCode proxy config').padEnd(44)} ${chalk.dim('Enter removes fcm-proxy from opencode.json')}`
-    cursorLineByRow[proxyCleanupRowIdx] = lines.length
-    lines.push(state.settingsCursor === proxyCleanupRowIdx ? chalk.bgRgb(45, 30, 30)(proxyCleanupRow) : proxyCleanupRow)
+    const proxyDaemonBullet = state.settingsCursor === proxyDaemonRowIdx ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+    const proxyStatus = proxySettings.enabled ? chalk.greenBright('Proxy ON') : chalk.dim('Proxy OFF')
+    const daemonStatus = state.daemonStatus || 'not-installed'
+    let daemonBadge
+    if (daemonStatus === 'running') daemonBadge = chalk.greenBright('Daemon ON')
+    else if (daemonStatus === 'stopped') daemonBadge = chalk.yellow('Daemon stopped')
+    else if (daemonStatus === 'stale' || daemonStatus === 'unhealthy') daemonBadge = chalk.red('Daemon ' + daemonStatus)
+    else daemonBadge = chalk.dim('Daemon OFF')
+    const proxyDaemonRow = `${proxyDaemonBullet}${chalk.bold('Proxy & Daemon settings →').padEnd(44)} ${proxyStatus} ${chalk.dim('•')} ${daemonBadge}`
+    cursorLineByRow[proxyDaemonRowIdx] = lines.length
+    lines.push(state.settingsCursor === proxyDaemonRowIdx ? chalk.bgRgb(20, 45, 60)(proxyDaemonRow) : proxyDaemonRow)
 
     // 📖 Changelog viewer row
     const changelogViewBullet = state.settingsCursor === changelogViewRowIdx ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
@@ -309,7 +296,7 @@ export function createOverlayRenderers(state, deps) {
 
     // 📖 Profiles section — list saved profiles with active indicator + delete support
     const savedProfiles = listProfiles(state.config)
-    const profileStartIdx = updateRowIdx + 6
+    const profileStartIdx = updateRowIdx + 3
     const maxRowIdx = savedProfiles.length > 0 ? profileStartIdx + savedProfiles.length - 1 : updateRowIdx
 
     lines.push('')
@@ -1393,6 +1380,211 @@ export function createOverlayRenderers(state, deps) {
     return cleared.join('\n')
   }
 
+  // ─── Proxy & Daemon overlay renderer ────────────────────────────────────────
+  // 📖 renderProxyDaemon: Dedicated full-page overlay for proxy configuration
+  // 📖 and background daemon management. Opened from Settings → "Proxy & Daemon settings →".
+  // 📖 Contains all proxy toggles, daemon status/actions, explanations, and emergency kill.
+  function renderProxyDaemon() {
+    const EL = '\x1b[K'
+    const lines = []
+    const cursorLineByRow = {}
+    const proxySettings = getProxySettings(state.config)
+
+    // 📖 Row indices — these control cursor navigation
+    const ROW_PROXY_ENABLED = 0
+    const ROW_PROXY_SYNC = 1
+    const ROW_PROXY_PORT = 2
+    const ROW_PROXY_CLEANUP = 3
+    const ROW_DAEMON_INSTALL = 4
+    const ROW_DAEMON_RESTART = 5
+    const ROW_DAEMON_STOP = 6
+    const ROW_DAEMON_KILL = 7
+    const ROW_DAEMON_LOGS = 8
+
+    const daemonStatus = state.daemonStatus || 'not-installed'
+    const daemonInfo = state.daemonInfo
+    const daemonIsActive = daemonStatus === 'running' || daemonStatus === 'unhealthy' || daemonStatus === 'stale'
+    const daemonIsInstalled = daemonIsActive || daemonStatus === 'stopped'
+
+    // 📖 Compute max row — hide daemon action rows when daemon not installed
+    let maxRow = ROW_DAEMON_INSTALL
+    if (daemonIsInstalled) maxRow = ROW_DAEMON_LOGS
+
+    // 📖 Header
+    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${chalk.bold('📡 Proxy & Daemon Manager')}`)
+    lines.push(`  ${chalk.dim('— Esc back to Settings • ↑↓ navigate • Enter select')}`)
+    lines.push('')
+
+    // 📖 Feedback message (auto-clears after 5s)
+    const msg = state.proxyDaemonMessage
+    if (msg && (Date.now() - msg.ts < 5000)) {
+      const msgColor = msg.type === 'success' ? chalk.greenBright : msg.type === 'warning' ? chalk.yellow : chalk.red
+      lines.push(`  ${msgColor(msg.msg)}`)
+      lines.push('')
+    }
+
+    // ────────────────────────────── PROXY SECTION ──────────────────────────────
+    lines.push(`  ${chalk.bold('🔀 Proxy Configuration')}`)
+    lines.push(`  ${chalk.dim('  ─────────────────────────────────────────────')}`)
+    lines.push('')
+    lines.push(`  ${chalk.dim('  The local proxy groups all your provider API keys into a single')}`)
+    lines.push(`  ${chalk.dim('  endpoint. Tools like OpenCode, Claude Code, Goose, etc. connect')}`)
+    lines.push(`  ${chalk.dim('  to this proxy which handles key rotation, rate limiting, and failover.')}`)
+    lines.push('')
+
+    // 📖 Row 0: Proxy enabled toggle
+    const r0b = state.proxyDaemonCursor === ROW_PROXY_ENABLED ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+    const r0val = proxySettings.enabled ? chalk.greenBright('Enabled') : chalk.dim('Disabled (opt-in)')
+    const r0 = `${r0b}${chalk.bold('Proxy mode').padEnd(44)} ${r0val}`
+    cursorLineByRow[ROW_PROXY_ENABLED] = lines.length
+    lines.push(state.proxyDaemonCursor === ROW_PROXY_ENABLED ? chalk.bgRgb(20, 45, 60)(r0) : r0)
+
+    // 📖 Row 1: Sync to OpenCode
+    const r1b = state.proxyDaemonCursor === ROW_PROXY_SYNC ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+    const r1val = proxySettings.syncToOpenCode ? chalk.greenBright('Enabled') : chalk.dim('Disabled')
+    const r1 = `${r1b}${chalk.bold('Persist proxy in OpenCode').padEnd(44)} ${r1val}`
+    cursorLineByRow[ROW_PROXY_SYNC] = lines.length
+    lines.push(state.proxyDaemonCursor === ROW_PROXY_SYNC ? chalk.bgRgb(20, 45, 60)(r1) : r1)
+
+    // 📖 Row 2: Preferred port
+    const r2b = state.proxyDaemonCursor === ROW_PROXY_PORT ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+    const r2val = state.settingsProxyPortEditMode && state.proxyDaemonCursor === ROW_PROXY_PORT
+      ? chalk.cyanBright(`${state.settingsProxyPortBuffer}▏`)
+      : (proxySettings.preferredPort === 0 ? chalk.dim('auto (OS-assigned)') : chalk.green(String(proxySettings.preferredPort)))
+    const r2 = `${r2b}${chalk.bold('Preferred proxy port').padEnd(44)} ${r2val}`
+    cursorLineByRow[ROW_PROXY_PORT] = lines.length
+    lines.push(state.proxyDaemonCursor === ROW_PROXY_PORT ? chalk.bgRgb(20, 45, 60)(r2) : r2)
+
+    // 📖 Row 3: Clean OpenCode proxy config
+    const r3b = state.proxyDaemonCursor === ROW_PROXY_CLEANUP ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+    const r3 = `${r3b}${chalk.bold('Clean OpenCode proxy config').padEnd(44)} ${chalk.dim('Enter → removes fcm-proxy from opencode.json')}`
+    cursorLineByRow[ROW_PROXY_CLEANUP] = lines.length
+    lines.push(state.proxyDaemonCursor === ROW_PROXY_CLEANUP ? chalk.bgRgb(45, 30, 30)(r3) : r3)
+
+    // ────────────────────────────── DAEMON SECTION ─────────────────────────────
+    lines.push('')
+    lines.push(`  ${chalk.bold('📡 Background Daemon')}`)
+    lines.push(`  ${chalk.dim('  ─────────────────────────────────────────────')}`)
+    lines.push('')
+    lines.push(`  ${chalk.dim('  The daemon is a persistent background service that keeps the proxy')}`)
+    lines.push(`  ${chalk.dim('  running 24/7 — even when the TUI is closed or after a reboot.')}`)
+    lines.push(`  ${chalk.dim('  Claude Code, Gemini CLI, and all tools stay connected at all times.')}`)
+    lines.push('')
+
+    // 📖 Status display
+    let daemonStatusLine = `  ${chalk.bold('  Status:')} `
+    if (daemonStatus === 'running') {
+      daemonStatusLine += chalk.greenBright('● Running')
+      if (daemonInfo) daemonStatusLine += chalk.dim(` — PID ${daemonInfo.pid} • Port ${daemonInfo.port} • ${daemonInfo.accountCount || '?'} accounts • ${daemonInfo.modelCount || '?'} models`)
+    } else if (daemonStatus === 'stopped') {
+      daemonStatusLine += chalk.yellow('○ Stopped') + chalk.dim(' — service installed but daemon not running')
+    } else if (daemonStatus === 'stale') {
+      daemonStatusLine += chalk.red('⚠ Stale') + chalk.dim(' — daemon crashed, PID no longer alive')
+    } else if (daemonStatus === 'unhealthy') {
+      daemonStatusLine += chalk.red('⚠ Unhealthy') + chalk.dim(' — PID alive but health check failed')
+    } else {
+      daemonStatusLine += chalk.dim('○ Not installed')
+    }
+    lines.push(daemonStatusLine)
+
+    // 📖 Version mismatch warning
+    if (daemonInfo?.version && daemonInfo.version !== LOCAL_VERSION) {
+      lines.push(`  ${chalk.yellow(`  ⚠ Version mismatch: daemon v${daemonInfo.version} vs FCM v${LOCAL_VERSION}`)}`)
+      lines.push(`  ${chalk.dim('    Restart or reinstall the daemon to apply the update.')}`)
+    }
+
+    // 📖 Uptime
+    if (daemonStatus === 'running' && daemonInfo?.startedAt) {
+      const upSec = Math.floor((Date.now() - new Date(daemonInfo.startedAt).getTime()) / 1000)
+      const upMin = Math.floor(upSec / 60)
+      const upHr = Math.floor(upMin / 60)
+      const uptimeStr = upHr > 0 ? `${upHr}h ${upMin % 60}m` : upMin > 0 ? `${upMin}m ${upSec % 60}s` : `${upSec}s`
+      lines.push(`  ${chalk.dim(`  Uptime: ${uptimeStr}`)}`)
+    }
+
+    lines.push('')
+
+    // 📖 Row 4: Install / Uninstall
+    const r4b = state.proxyDaemonCursor === ROW_DAEMON_INSTALL ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+    const r4label = daemonIsInstalled ? 'Uninstall daemon' : 'Install background daemon'
+    const r4hint = daemonIsInstalled
+      ? chalk.dim('Enter → stop service + remove config')
+      : chalk.dim('Enter → install as OS service (launchd/systemd)')
+    const r4 = `${r4b}${chalk.bold(r4label).padEnd(44)} ${r4hint}`
+    cursorLineByRow[ROW_DAEMON_INSTALL] = lines.length
+    lines.push(state.proxyDaemonCursor === ROW_DAEMON_INSTALL ? chalk.bgRgb(daemonIsInstalled ? 45 : 20, daemonIsInstalled ? 30 : 45, daemonIsInstalled ? 30 : 40)(r4) : r4)
+
+    // 📖 Rows 5-8 only shown when daemon is installed
+    if (daemonIsInstalled) {
+      // 📖 Row 5: Restart daemon
+      const r5b = state.proxyDaemonCursor === ROW_DAEMON_RESTART ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+      const r5 = `${r5b}${chalk.bold('Restart daemon').padEnd(44)} ${chalk.dim('Enter → stop + start via OS service manager')}`
+      cursorLineByRow[ROW_DAEMON_RESTART] = lines.length
+      lines.push(state.proxyDaemonCursor === ROW_DAEMON_RESTART ? chalk.bgRgb(20, 45, 60)(r5) : r5)
+
+      // 📖 Row 6: Stop daemon (SIGTERM)
+      const r6b = state.proxyDaemonCursor === ROW_DAEMON_STOP ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+      const r6warn = daemonIsInstalled ? chalk.dim(' (service may auto-restart)') : ''
+      const r6 = `${r6b}${chalk.bold('Stop daemon').padEnd(44)} ${chalk.dim('Enter → graceful shutdown (SIGTERM)')}${r6warn}`
+      cursorLineByRow[ROW_DAEMON_STOP] = lines.length
+      lines.push(state.proxyDaemonCursor === ROW_DAEMON_STOP ? chalk.bgRgb(45, 40, 20)(r6) : r6)
+
+      // 📖 Row 7: Force kill (SIGKILL) — emergency
+      const r7b = state.proxyDaemonCursor === ROW_DAEMON_KILL ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+      const r7 = `${r7b}${chalk.bold.red('Force kill daemon').padEnd(44)} ${chalk.dim('Enter → SIGKILL — emergency only')}`
+      cursorLineByRow[ROW_DAEMON_KILL] = lines.length
+      lines.push(state.proxyDaemonCursor === ROW_DAEMON_KILL ? chalk.bgRgb(60, 20, 20)(r7) : r7)
+
+      // 📖 Row 8: View logs
+      const r8b = state.proxyDaemonCursor === ROW_DAEMON_LOGS ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+      const r8 = `${r8b}${chalk.bold('View daemon logs').padEnd(44)} ${chalk.dim('Enter → show last 50 log lines')}`
+      cursorLineByRow[ROW_DAEMON_LOGS] = lines.length
+      lines.push(state.proxyDaemonCursor === ROW_DAEMON_LOGS ? chalk.bgRgb(30, 30, 50)(r8) : r8)
+    }
+
+    // ────────────────────────────── INFO SECTION ───────────────────────────────
+    lines.push('')
+    lines.push(`  ${chalk.bold('ℹ  How it works')}`)
+    lines.push(`  ${chalk.dim('  ─────────────────────────────────────────────')}`)
+    lines.push('')
+    lines.push(`  ${chalk.dim('  📖 The proxy starts a local HTTP server on 127.0.0.1 (localhost only).')}`)
+    lines.push(`  ${chalk.dim('  📖 External tools connect to it as if it were OpenAI/Anthropic.')}`)
+    lines.push(`  ${chalk.dim('  📖 The proxy rotates between your API keys across all providers.')}`)
+    lines.push('')
+    lines.push(`  ${chalk.dim('  📖 The daemon adds persistence: install it once, and the proxy')}`)
+    lines.push(`  ${chalk.dim('  📖 starts automatically at login and survives reboots.')}`)
+    lines.push('')
+    lines.push(`  ${chalk.dim('  📖 Claude Code support: the daemon translates Anthropic wire format')}`)
+    lines.push(`  ${chalk.dim('  📖 (POST /v1/messages) to OpenAI format for upstream providers.')}`)
+    lines.push('')
+    if (process.platform === 'darwin') {
+      lines.push(`  ${chalk.dim('  📦 macOS: launchd LaunchAgent at ~/Library/LaunchAgents/com.fcm.proxy.plist')}`)
+    } else if (process.platform === 'linux') {
+      lines.push(`  ${chalk.dim('  📦 Linux: systemd user service at ~/.config/systemd/user/fcm-proxy.service')}`)
+    } else {
+      lines.push(`  ${chalk.dim('  ⚠ Windows: daemon not supported — use in-process proxy (starts with TUI)')}`)
+    }
+    lines.push('')
+
+    // 📖 Clamp cursor
+    if (state.proxyDaemonCursor > maxRow) state.proxyDaemonCursor = maxRow
+
+    // 📖 Scrolling and tinting
+    const PROXY_DAEMON_BG = chalk.bgRgb(15, 25, 45)
+    const targetLine = cursorLineByRow[state.proxyDaemonCursor] ?? 0
+    state.proxyDaemonScrollOffset = keepOverlayTargetVisible(
+      state.proxyDaemonScrollOffset,
+      targetLine,
+      lines.length,
+      state.terminalRows
+    )
+    const { visible, offset } = sliceOverlayLines(lines, state.proxyDaemonScrollOffset, state.terminalRows)
+    state.proxyDaemonScrollOffset = offset
+    const tintedLines = tintOverlayLines(visible, PROXY_DAEMON_BG, state.terminalCols)
+    return tintedLines.map(l => l + EL).join('\n')
+  }
+
   // 📖 stopRecommendAnalysis: cleanup timers if user cancels during analysis
   function stopRecommendAnalysis() {
     if (state.recommendAnalysisTimer) { clearInterval(state.recommendAnalysisTimer); state.recommendAnalysisTimer = null }
@@ -1401,6 +1593,7 @@ export function createOverlayRenderers(state, deps) {
 
   return {
     renderSettings,
+    renderProxyDaemon,
     renderInstallEndpoints,
     renderHelp,
     renderLog,

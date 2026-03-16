@@ -69,8 +69,8 @@ By Vanessa Depraute
 
 - **🎯 Coding-focused** — Only LLM models optimized for code generation, not chat or vision
 - **🌐 Multi-provider** — Models from NVIDIA NIM, Groq, Cerebras, SambaNova, OpenRouter, Hugging Face Inference, Replicate, DeepInfra, Fireworks AI, Codestral, Hyperbolic, Scaleway, Google AI, SiliconFlow, Together AI, Cloudflare Workers AI, Perplexity API, Alibaba Cloud (DashScope), ZAI, and iFlow
-- **⚙️ Settings screen** — Press `P` to manage provider API keys, enable/disable providers, configure the proxy, clean OpenCode proxy sync, and manually check/install updates
-- **🔀 Multi-account Proxy (`fcm-proxy`)** — Automatically starts a local reverse proxy that groups all your accounts into a single provider in OpenCode; supports multi-account rotation and auto-detects usage limits to swap between providers.
+- **⚙️ Settings screen** — Press `P` to manage provider API keys, enable/disable providers, access the Proxy & Daemon manager, and check/install updates
+- **📡 Proxy & Daemon** — Built-in reverse proxy with multi-key rotation, rate-limit failover, and Anthropic wire format translation for Claude Code. Optional always-on daemon mode (`launchd`/`systemd`) keeps the proxy running 24/7 — even without the TUI. Dedicated overlay with full status, restart, stop, force-kill, and log viewer.
 - **🚀 Parallel pings** — All models tested simultaneously via native `fetch`
 - **📊 Real-time animation** — Watch latency appear live in alternate screen buffer
 - **🏆 Smart ranking** — Top 3 fastest models highlighted with medals 🥇🥈🥉
@@ -554,31 +554,87 @@ Stability = 0.30 × p95_score
 
 ---
 
-## 🔀 Multi-Account Proxy (`fcm-proxy`)
+## 📡 Proxy & Background Daemon
 
-`free-coding-models` includes a built-in reverse proxy that can group all your provider accounts into a single virtual provider.
+`free-coding-models` includes a local reverse proxy that merges all your provider API keys into one endpoint. Optional daemon mode keeps it running 24/7 — even without the TUI.
 
-Important:
-- **Disabled by default** — proxy mode is now opt-in from the Settings screen (`P`)
-- **Direct OpenCode launch remains the default** when proxy mode is off
-- **Token/request logs are only populated by proxied requests** today
+> **Disabled by default** — enable in Settings (`P`) → Proxy & Daemon settings.
 
-### Why use the proxy?
-- **Unified Provider**: Instead of managing 20+ providers in your coding assistant, just use `fcm-proxy`.
-- **Automatic Rotation**: When one account hits its rate limit (429), the proxy automatically swaps to the next available account for that model.
-- **Quota Awareness**: The proxy tracks usage in real-time and prioritizes accounts with the most remaining bandwidth.
-- **Transparent Bridging**: Automatically handles non-standard API paths (like ZAI's `/api/coding/paas/v4/`) and converts them to standard OpenAI-compatible `/v1/` calls.
+### What the proxy does
 
-### How to use it
-1. Open **Settings** with `P`
-2. Enable **Proxy mode (opt-in)**
-3. Optionally enable **Persist proxy in OpenCode** if you explicitly want `fcm-proxy` written to `~/.config/opencode/opencode.json`
-4. Optionally set **Preferred proxy port** (`0` = auto)
-5. Use `S` in Settings to sync the proxy catalog into OpenCode only when you actually want that persistent config
+| Feature | Description |
+|---------|-------------|
+| **Unified endpoint** | One URL (`http://127.0.0.1:18045/v1`) replaces 20+ provider endpoints |
+| **Key rotation** | Automatically swaps to the next API key when one hits rate limits (429) |
+| **Usage tracking** | Tracks token consumption per provider/model pair in real-time |
+| **Anthropic translation** | Claude Code sends `POST /v1/messages` — the proxy translates to OpenAI format upstream |
+| **Path normalization** | Converts non-standard API paths (ZAI, Cloudflare) to standard `/v1/` calls |
 
-Cleanup:
-- Use the Settings action **Clean OpenCode proxy config**
-- Or run `free-coding-models --clean-proxy`
+### In-process vs Daemon mode
+
+| | In-process (default) | Daemon (always-on) |
+|---|---|---|
+| **Lifetime** | Starts/stops with TUI | Survives reboots |
+| **Use case** | Quick sessions | 24/7 access from any tool |
+| **Setup** | Toggle in Settings | One-time install via TUI or CLI |
+| **Port** | Random or configured | Stable (`18045` by default) |
+| **Token** | New each session | Persistent (env files stay valid) |
+
+### Quick setup
+
+**Via TUI (recommended):**
+1. Press `P` to open Settings
+2. Select **Proxy & Daemon settings →** and press Enter
+3. Enable **Proxy mode**, then select **Install background daemon**
+
+**Via CLI:**
+```bash
+free-coding-models daemon install     # Install + start as OS service
+free-coding-models daemon status      # Check running status
+free-coding-models daemon restart     # Restart after config changes
+free-coding-models daemon stop        # Graceful stop (SIGTERM)
+free-coding-models daemon uninstall   # Remove OS service completely
+free-coding-models daemon logs        # Show recent daemon logs
+```
+
+### Daemon management
+
+The dedicated **Proxy & Daemon** overlay (from Settings → Enter) provides full control:
+
+- **Status display** — Running/Stopped/Stale/Unhealthy with PID, port, uptime, account/model counts
+- **Version mismatch detection** — warns if daemon version differs from installed FCM version
+- **Restart** — stop + start via the OS service manager
+- **Stop** — graceful SIGTERM (service may auto-restart if installed)
+- **Force kill** — emergency SIGKILL for stuck processes
+- **View logs** — last 50 lines from `~/.free-coding-models/daemon-stdout.log`
+
+### Platform support
+
+| Platform | Service type | Config path |
+|----------|-------------|-------------|
+| macOS | `launchd` LaunchAgent | `~/Library/LaunchAgents/com.fcm.proxy.plist` |
+| Linux | `systemd` user service | `~/.config/systemd/user/fcm-proxy.service` |
+| Windows | Not supported | Falls back to in-process proxy |
+
+### Config files
+
+| File | Purpose |
+|------|---------|
+| `~/.free-coding-models.json` | API keys, proxy settings, daemon consent |
+| `~/.free-coding-models/daemon.json` | Status file (PID, port, token) — written by daemon |
+| `~/.free-coding-models/daemon-stdout.log` | Daemon output log |
+
+### Cleanup
+
+- From the Proxy & Daemon overlay: **Clean OpenCode proxy config** (removes `fcm-proxy` from `opencode.json`)
+- Or: `free-coding-models --clean-proxy`
+
+### Safety
+
+- **Dev guard**: `installDaemon()` is blocked when running from a git checkout — prevents hardcoding local repo paths in OS service files
+- **Localhost only**: The proxy listens on `127.0.0.1`, never exposed to the network
+- **Consent required**: Daemon installation requires explicit user action — never auto-installs
+- **Hot-reload**: Config changes are picked up automatically without restarting the daemon
 
 ---
 

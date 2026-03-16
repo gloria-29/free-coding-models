@@ -113,11 +113,15 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 // 📖 New JSON config path — stores all providers' API keys + enabled state
 export const CONFIG_PATH = join(homedir(), '.free-coding-models.json')
+
+// 📖 Daemon data directory — PID file, logs, etc.
+export const DAEMON_DATA_DIR = join(homedir(), '.free-coding-models')
 
 // 📖 Old plain-text config path — used only for migration
 const LEGACY_CONFIG_PATH = join(homedir(), '.free-coding-models')
@@ -648,18 +652,33 @@ export function _emptyProfileSettings() {
  * 📖 normalizeProxySettings: keep proxy-related preferences stable across old configs,
  * 📖 new installs, and profile switches. Proxy is opt-in by default.
  *
+ * 📖 stableToken — persisted bearer token shared between TUI and daemon. Generated once
+ *    on first access so env files and tool configs remain valid across restarts.
+ * 📖 daemonEnabled — opt-in for the always-on background proxy daemon (launchd / systemd).
+ * 📖 daemonConsent — ISO timestamp of when user consented to daemon install, or null.
+ *
  * @param {object|undefined|null} proxy
- * @returns {{ enabled: boolean, syncToOpenCode: boolean, preferredPort: number }}
+ * @returns {{ enabled: boolean, syncToOpenCode: boolean, preferredPort: number, stableToken: string, daemonEnabled: boolean, daemonConsent: string|null }}
  */
 export function normalizeProxySettings(proxy = null) {
   const preferredPort = Number.isInteger(proxy?.preferredPort) && proxy.preferredPort >= 0 && proxy.preferredPort <= 65535
     ? proxy.preferredPort
     : 0
 
+  // 📖 Generate a stable proxy token once and persist it forever
+  const stableToken = (typeof proxy?.stableToken === 'string' && proxy.stableToken.length > 0)
+    ? proxy.stableToken
+    : `fcm_${randomBytes(24).toString('hex')}`
+
   return {
     enabled: proxy?.enabled === true,
     syncToOpenCode: proxy?.syncToOpenCode === true,
     preferredPort,
+    stableToken,
+    daemonEnabled: proxy?.daemonEnabled === true,
+    daemonConsent: (typeof proxy?.daemonConsent === 'string' && proxy.daemonConsent.length > 0)
+      ? proxy.daemonConsent
+      : null,
   }
 }
 

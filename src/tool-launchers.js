@@ -336,8 +336,20 @@ export async function startExternalTool(mode, model, config) {
   }
 
   if (mode === 'claude-code') {
-    console.log(chalk.yellow('  ⚠ Claude Code expects an Anthropic/Bedrock/Vertex-compatible gateway.'))
-    console.log(chalk.dim('  This launch passes proxy env vars, but your endpoint must support Claude Code wire semantics.'))
+    // 📖 Claude Code needs Anthropic-compatible wire format (POST /v1/messages).
+    // 📖 The FCM proxy now natively translates Anthropic ↔ OpenAI, so route through it.
+    if (proxySettings.enabled) {
+      const started = await ensureProxyRunning(config)
+      const proxyBase = `http://127.0.0.1:${started.port}`
+      env.ANTHROPIC_BASE_URL = proxyBase
+      env.ANTHROPIC_API_KEY = started.proxyToken
+      const launchModelId = resolveLauncherModelId(model, true)
+      console.log(chalk.dim(`  📖 Claude Code routed through FCM proxy on :${started.port} (Anthropic translation enabled)`))
+      return spawnCommand('claude', ['--model', launchModelId], env)
+    }
+    // 📖 Direct mode — pass provider env vars as-is
+    console.log(chalk.yellow('  ⚠ Claude Code expects an Anthropic-compatible endpoint.'))
+    console.log(chalk.dim('  Enable proxy mode in Settings (P) for automatic Anthropic translation.'))
     return spawnCommand('claude', ['--model', model.modelId], env)
   }
 

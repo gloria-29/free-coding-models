@@ -2,6 +2,27 @@
 
 ---
 
+## 0.2.18
+
+### Added
+- **Always-on background proxy daemon**: The FCM proxy can now run as a persistent background service via `launchd` (macOS) or `systemd` (Linux). Claude Code, Gemini CLI, and all other tools get free model access 24/7 — no need to keep the TUI open.
+- **Anthropic wire format translation**: Native bidirectional translation between Anthropic Messages API (`POST /v1/messages`) and OpenAI Chat Completions. Claude Code works natively through the FCM proxy without needing the external `free-claude-code` Python proxy.
+- **Dedicated Proxy & Daemon overlay**: New full-page overlay (from Settings → "Proxy & Daemon settings →") with proxy config, daemon status, restart, stop, force-kill, and log viewer — all in one clean interface.
+- **CLI daemon subcommand**: `free-coding-models daemon [status|install|uninstall|restart|stop|logs]` for headless daemon control.
+- **Stable proxy identity**: Persistent token and preferred port (`18045`) survive daemon restarts — env files and tool configs remain valid across reboots.
+- **Health endpoint**: `GET /v1/health` returns uptime, version, and account/model counts for liveness probes.
+- **Hot-reload**: Daemon watches `~/.free-coding-models.json` and reloads proxy topology (accounts, models) automatically when config changes.
+- **Version mismatch detection**: The overlay warns when the running daemon version differs from the installed FCM version.
+- **Dev environment guard**: `installDaemon()` is blocked when running from a git checkout to prevent hardcoding local repo paths in OS service files.
+
+### Changed
+- **Proxy settings moved to dedicated overlay**: The 5 proxy/daemon rows in Settings are replaced by a single "Proxy & Daemon settings →" entry that opens a full-page manager with explanations, status, and all actions.
+- **Proxy topology extracted to shared module**: `src/proxy-topology.js` is now used by both TUI and daemon, eliminating code duplication.
+- **TUI delegates to daemon**: `ensureProxyRunning()` checks for a running daemon first and reuses its port/token instead of starting an in-process proxy.
+- **Endpoint installer supports proxy mode**: When installing endpoints (Y key) with "FCM Proxy" connection mode, env files now point to the daemon's stable token/port.
+
+---
+
 ## 0.2.17
 
 ### Added
