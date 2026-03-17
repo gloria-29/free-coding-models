@@ -233,3 +233,45 @@ This gives **visual verification** that your code changes actually work in the r
 - Update CHANGELOG.md BEFORE committing and pushing
 
 **Why this is critical:** The changelog is the only historical record of what was changed in each version. Without it, users cannot understand what changed between versions.
+
+## Version Bump Workflow (/bump command)
+
+When user requests `/bump`, `"push commit"`, or `"bump a new version now"`, execute this comprehensive workflow:
+
+### 1. Check Version Status
+- Check current version in `package.json`
+- Check last published version: `git log --oneline | grep "^[a-f0-9]\+ [0-9]"`
+- If multiple uncommitted version bumps exist, consolidate them into the next sequential version
+
+### 2. Update Changelog
+- Merge all changes since last published version into single changelog entry
+- Use proper semantic versioning (no skipping versions)
+- Ensure changelog is user-facing with clear bullet points
+
+### 3. Update Documentation
+- Review and update `README.md` if needed for new features/changes
+- Ensure documentation reflects current functionality
+
+### 4. Pre-Commit Verification
+- Run `pnpm test` — fix any failures immediately
+- Run `pnpm start` — verify no runtime errors
+- Only proceed when all tests pass
+
+### 5. Commit and Push
+- Update version in `package.json` to next sequential version
+- Identify the most significant change for this release
+- `git add . && git commit -m "VERSION_NUMBER - EMOJI SHORT_TITLE"` (version + emoji + main feature)
+- `git push origin main` — triggers GitHub Actions auto-publish
+
+### 6. Verify npm Publication
+- Poll npm registry for 5 minutes:
+  ```bash
+  for i in $(seq 1 30); do sleep 10; v=$(npm view free-coding-models version 2>/dev/null); echo "Attempt $i: npm version = $v"; if [ "$v" = "NEW_VERSION" ]; then echo "✅ published!"; break; fi; done
+  ```
+
+### 7. Final Verification
+- `npm install -g free-coding-models@NEW_VERSION`
+- `free-coding-models --help` — verify binary works globally
+- Only confirm release when global npm-installed version functions correctly
+
+**Critical:** Never skip versions — consolidate all changes into the next sequential version number.
