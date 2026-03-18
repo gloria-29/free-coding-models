@@ -409,6 +409,7 @@ export async function runApp(cliArgs, config) {
     commandPaletteScrollOffset: 0, // 📖 Vertical scroll offset for the command palette result viewport.
     commandPaletteResults: [],    // 📖 Cached fuzzy-filtered command entries for the command palette.
     commandPaletteFrozenTable: null, // 📖 Frozen table snapshot rendered behind the command palette overlay.
+    commandPaletteExpandedIds: new Set(['filters']), // 📖 Set of expanded category/subcategory IDs (filters expanded by default for quick access).
     helpVisible: false,           // 📖 Whether the help overlay (K key) is active
     settingsScrollOffset: 0,      // 📖 Vertical scroll offset for Settings overlay viewport
     helpScrollOffset: 0,          // 📖 Vertical scroll offset for Help overlay viewport
@@ -457,6 +458,8 @@ export async function runApp(cliArgs, config) {
     changelogPhase: 'index',      // 📖 'index' (all versions) | 'details' (specific version)
     changelogCursor: 0,           // 📖 Selected row in index phase
     changelogSelectedVersion: null, // 📖 Which version to show details for
+    // 📖 Custom text filter (Ctrl+P palette → type text → Enter). Ephemeral — not saved to config.
+    customTextFilter: null,       // 📖 Active free-text filter string (null = off). Matches model name, ctx, provider key/name.
   }
 
   // 📖 Re-clamp viewport on terminal resize
@@ -690,8 +693,22 @@ export async function runApp(cliArgs, config) {
       const allowedTiers = (activeTier && TIER_LETTER_MAP[activeTier]) ? TIER_LETTER_MAP[activeTier] : [activeTier]
       const tierHide = activeTier !== null && !allowedTiers.includes(r.tier)
       const originHide = activeOrigin !== null && r.providerKey !== activeOrigin
-      r.hidden = tierHide || originHide
-
+      if (tierHide || originHide) {
+        r.hidden = true
+        return
+      }
+      // 📖 Custom text filter — case-insensitive includes match against model name, ctx, provider key, and provider display name.
+      if (state.customTextFilter) {
+        const q = state.customTextFilter.toLowerCase()
+        const providerName = (sources[r.providerKey]?.name || '').toLowerCase()
+        const match = (r.label || '').toLowerCase().includes(q)
+          || (r.ctx || '').toLowerCase().includes(q)
+          || (r.providerKey || '').toLowerCase().includes(q)
+          || providerName.includes(q)
+        r.hidden = !match
+        return
+      }
+      r.hidden = false
     })
     return state.results
   }

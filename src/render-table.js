@@ -50,7 +50,6 @@ import { getAvg, getVerdict, getUptime, getStabilityScore, getVersionStatusInfo 
 import { usagePlaceholderForProvider } from './ping.js'
 import { calculateViewport, sortResultsWithPinnedFavorites, padEndDisplay, displayWidth } from './render-helpers.js'
 import { getToolMeta } from './tool-metadata.js'
-import { PROXY_DISABLED_NOTICE } from './product-flags.js'
 import { getColumnSpacing } from './ui-config.js'
 
 const require = createRequire(import.meta.url)
@@ -149,11 +148,11 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   const SEP_W = 3  // ' │ ' display width
   const ROW_MARGIN = 2  // left margin '  '
   const W_RANK = 6
-  const W_TIER = 6
-  const W_CTX = 6
+  const W_TIER = 5
+  const W_CTX = 4
   const W_SOURCE = 14
   const W_MODEL = 26
-  const W_SWE = 6
+  const W_SWE = 5
   const W_STATUS = 18
   const W_VERDICT = 14
   const W_UPTIME = 6
@@ -164,8 +163,9 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   // 📖 Responsive column visibility: progressively hide least-useful columns
   // 📖 and shorten header labels when terminal width is insufficient.
   // 📖 Hiding order (least useful first): Rank → Up% → Tier → Stability
-  // 📖 Compact mode shrinks: Latest Ping→Lat. P (10), Avg Ping→Avg. P (8),
-  // 📖 Stability→StaB. (8), Provider→4chars+… (10), Health→6chars+… (13)
+  // 📖 Compact mode shrinks: Latest Ping→Lat. P (9), Avg Ping→Avg. P (8),
+  // 📖 Stability→StaB. (8), Provider→4chars+… (7), Health→6chars+… (13)
+  // 📖 Breakpoints: full=169 | compact=146 | -Rank=137 | -Up%=128 | -Tier=120 | -Stab=109
   let wPing = 14
   let wAvg = 11
   let wStab = 11
@@ -192,10 +192,10 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     // 📖 Step 1: Compact mode — shorten labels and reduce column widths
     if (calcWidth() > terminalCols) {
       isCompact = true
-      wPing = 10     // 'Lat. P' instead of 'Latest Ping'
+      wPing = 9      // 'Lat. P' instead of 'Latest Ping'
       wAvg = 8       // 'Avg. P' instead of 'Avg Ping'
       wStab = 8      // 'StaB.' instead of 'Stability'
-      wSource = 10   // Provider truncated to 4 chars + '…'
+      wSource = 7    // Provider truncated to 4 chars + '…', 7 cols total
       wStatus = 13   // Health truncated after 6 chars + '…'
     }
     // 📖 Steps 2–5: Progressive column hiding (least useful first)
@@ -620,7 +620,7 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   const activeHotkey = (keyLabel, text, bg) => themeColors.badge(`${keyLabel}${text}`, bg, getReadableTextRgb(bg))
   // 📖 Line 1: core navigation + filtering shortcuts
   lines.push(
-    hotkey('F', ' Toggle Favorite') +
+    '  ' + hotkey('F', ' Toggle Favorite') +
     themeColors.dim(`  •  `) +
     (tierFilterMode > 0
       ? activeHotkey('T', ` Tier (${activeTierLabel})`, getTierRgb(activeTierLabel))
@@ -636,11 +636,11 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     themeColors.dim(`  •  `) +
     hotkey('K', ' Help')
   )
-  // 📖 Line 2: install flow, recommend, feedback, and extended hints.
+  // 📖 Line 2: command palette (highlighted as new), recommend, feedback, and extended hints.
+  // 📖 CTRL+P Command Palette uses neon-green-on-dark-green background to highlight the new feature.
+  const paletteLabel = chalk.bgRgb(0, 60, 0).rgb(57, 255, 20).bold(' NEW ! CTRL+P Command Palette ')
   lines.push(
-    themeColors.dim(`  `) +
-    hotkey('Ctrl+P', ' Command palette') + themeColors.dim(`  •  `) +
-    hotkey('Y', ' Install endpoints') + themeColors.dim(`  •  `) +
+    '  ' + paletteLabel + themeColors.dim(`  •  `) +
     hotkey('Q', ' Smart Recommend') + themeColors.dim(`  •  `) +
     hotkey('G', ' Theme') + themeColors.dim(`  •  `) +
     hotkey('I', ' Feedback, bugs & requests')
@@ -661,11 +661,7 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     '💬 ' +
     themeColors.footerDiscord('\x1b]8;;https://discord.gg/ZTNFHvvCkU\x1b\\Discord\x1b]8;;\x1b\\') +
     themeColors.dim(' → ') +
-    themeColors.footerDiscord('https://discord.gg/ZTNFHvvCkU') +
-    themeColors.dim('  •  ') +
-    themeColors.hotkey('N') + themeColors.dim(' Changelog') +
-    themeColors.dim('  •  ') +
-    themeColors.dim('Ctrl+C Exit')
+    themeColors.footerDiscord('https://discord.gg/ZTNFHvvCkU')
   lines.push(footerLine)
 
   if (versionStatus.isOutdated) {
@@ -677,10 +673,12 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     lines.push(chalk.bgRed.white.bold(paddedBanner))
   }
 
-  // 📖 Stable release notice: keep the bridge rebuild status explicit in the main UI
-  // 📖 so users do not go hunting for hidden controls that are disabled on purpose.
-  const bridgeNotice = chalk.italic.rgb(...getTierRgb('A-'))(`  ${PROXY_DISABLED_NOTICE}`)
-  lines.push(bridgeNotice)
+  // 📖 Final footer line: changelog shortcut + exit hint (replaces the old proxy notice).
+  lines.push(
+    '  ' + themeColors.hotkey('N') + themeColors.dim(' Changelog') +
+    themeColors.dim('  •  ') +
+    themeColors.dim('Ctrl+C Exit')
+  )
 
   // 📖 Append \x1b[K (erase to EOL) to each line so leftover chars from previous
   // 📖 frames are cleared. Then pad with blank cleared lines to fill the terminal,

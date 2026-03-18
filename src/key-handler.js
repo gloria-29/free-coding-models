@@ -31,7 +31,7 @@ import { loadChangelog } from './changelog-loader.js'
 import { loadConfig, replaceConfigContents } from './config.js'
 import { cleanupLegacyProxyArtifacts } from './legacy-proxy-cleanup.js'
 import { cycleThemeSetting, detectActiveTheme } from './theme.js'
-import { buildCommandPaletteEntries, filterCommandPaletteEntries } from './command-palette.js'
+import { buildCommandPaletteTree, flattenCommandTree, filterCommandPaletteEntries } from './command-palette.js'
 import { WIDTH_WARNING_MIN_COLS } from './constants.js'
 
 // 📖 Some providers need an explicit probe model because the first catalog entry
@@ -609,6 +609,7 @@ export function createKeyHandler(ctx) {
   function resetViewSettings() {
     state.tierFilterMode = 0
     state.originFilterMode = 0
+    state.customTextFilter = null  // 📖 Clear ephemeral text filter on view reset
     state.sortColumn = 'avg'
     state.sortDirection = 'asc'
     if (!state.config.settings || typeof state.config.settings !== 'object') state.config.settings = {}
@@ -653,8 +654,33 @@ export function createKeyHandler(ctx) {
   }
 
   function refreshCommandPaletteResults() {
-    const commands = buildCommandPaletteEntries()
-    state.commandPaletteResults = filterCommandPaletteEntries(commands, state.commandPaletteQuery)
+    const tree = buildCommandPaletteTree()
+    const flat = flattenCommandTree(tree, state.commandPaletteExpandedIds)
+    state.commandPaletteResults = filterCommandPaletteEntries(flat, state.commandPaletteQuery)
+
+    const query = (state.commandPaletteQuery || '').trim()
+    if (query.length > 0) {
+      state.commandPaletteResults.unshift({
+        id: 'filter-custom-text-apply',
+        label: `🔍 Apply text filter: ${query}`,
+        type: 'command',
+        depth: 0,
+        hasChildren: false,
+        isExpanded: false,
+        filterQuery: query,
+      })
+    } else if (state.customTextFilter) {
+      state.commandPaletteResults.unshift({
+        id: 'filter-custom-text-remove',
+        label: `❌ Remove custom filter: ${state.customTextFilter}`,
+        type: 'command',
+        depth: 0,
+        hasChildren: false,
+        isExpanded: false,
+        filterQuery: null,
+      })
+    }
+
     if (state.commandPaletteCursor >= state.commandPaletteResults.length) {
       state.commandPaletteCursor = Math.max(0, state.commandPaletteResults.length - 1)
     }
@@ -683,6 +709,20 @@ export function createKeyHandler(ctx) {
 
     if (entry.id.startsWith('filter-tier-')) {
       setTierFilterFromCommand(entry.tierValue ?? null)
+      return
+    }
+
+    // 📖 Custom text filter — apply or remove the free-text filter from the command palette.
+    if (entry.id === 'filter-custom-text-apply') {
+      state.customTextFilter = entry.filterQuery || null
+      applyTierFilter()
+      refreshVisibleSorted({ resetCursor: true })
+      return
+    }
+    if (entry.id === 'filter-custom-text-remove') {
+      state.customTextFilter = null
+      applyTierFilter()
+      refreshVisibleSorted({ resetCursor: true })
       return
     }
 
@@ -758,6 +798,7 @@ export function createKeyHandler(ctx) {
       if (key.ctrl && key.name === 'c') { exit(0); return }
 
       const pageStep = Math.max(1, (state.terminalRows || 1) - 10)
+      const selected = state.commandPaletteResults[state.commandPaletteCursor]
 
       if (key.name === 'escape') {
         closeCommandPalette()
@@ -773,6 +814,23 @@ export function createKeyHandler(ctx) {
         const count = state.commandPaletteResults.length
         if (count === 0) return
         state.commandPaletteCursor = state.commandPaletteCursor < count - 1 ? state.commandPaletteCursor + 1 : 0
+        return
+      }
+      if (key.name === 'left') {
+        if (selected?.hasChildren && selected.isExpanded) {
+          state.commandPaletteExpandedIds.delete(selected.id)
+          refreshCommandPaletteResults()
+        }
+        return
+      }
+      if (key.name === 'right') {
+        if (selected?.hasChildren && !selected.isExpanded) {
+          state.commandPaletteExpandedIds.add(selected.id)
+          refreshCommandPaletteResults()
+        } else if (selected?.type === 'command') {
+          closeCommandPalette()
+          executeCommandPaletteEntry(selected)
+        }
         return
       }
       if (key.name === 'pageup') {
@@ -800,9 +858,17 @@ export function createKeyHandler(ctx) {
         return
       }
       if (key.name === 'return') {
-        const selectedCommand = state.commandPaletteResults[state.commandPaletteCursor]
-        closeCommandPalette()
-        executeCommandPaletteEntry(selectedCommand)
+        if (selected?.hasChildren) {
+          if (selected.isExpanded) {
+            state.commandPaletteExpandedIds.delete(selected.id)
+          } else {
+            state.commandPaletteExpandedIds.add(selected.id)
+          }
+          refreshCommandPaletteResults()
+        } else {
+          closeCommandPalette()
+          executeCommandPaletteEntry(selected)
+        }
         return
       }
       if (str && str.length === 1 && !key.ctrl && !key.meta) {
@@ -1619,11 +1685,7 @@ export function createKeyHandler(ctx) {
       return
     }
 
-    // 📖 Y key: open Install Endpoints flow for configured providers.
-    if (key.name === 'y') {
-      openInstallEndpointsOverlay()
-      return
-    }
+    // 📖 Y key freed — Install Endpoints is now accessible only via Settings (P) or Command Palette (Ctrl+P).
 
     // 📖 Profile system removed - API keys now persist permanently across all sessions
 
@@ -1636,7 +1698,7 @@ export function createKeyHandler(ctx) {
     }
 
     // 📖 Sorting keys: R=rank, O=origin, M=model, L=latest ping, A=avg ping, S=SWE-bench, C=context, H=health, V=verdict, B=stability, U=uptime, G=usage
-    // 📖 T is reserved for tier filter cycling. Y now opens the install-endpoints flow.
+    // 📖 T is reserved for tier filter cycling. Y is now free (Install Endpoints moved to Settings/Palette).
     // 📖 D is now reserved for provider filter cycling
     // 📖 Shift+R is reserved for reset view settings
     const sortKeys = {

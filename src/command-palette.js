@@ -1,63 +1,152 @@
 /**
  * @file command-palette.js
  * @description Command palette registry and fuzzy search helpers for the main TUI.
+ *          Now supports hierarchical categories with expandable/collapsible groups.
  *
  * @functions
- *   → `buildCommandPaletteEntries` — builds the current command list with dynamic provider/tier context
+ *   → `buildCommandPaletteTree` — builds the hierarchical command tree with categories and subcategories
+ *   → `flattenCommandTree` — converts tree to flat list for filtering (respects expansion state)
  *   → `fuzzyMatchCommand` — scores a query against one string and returns match positions
  *   → `filterCommandPaletteEntries` — returns sorted command matches for a query
  *
- * @exports { COMMAND_CATEGORY_ORDER, buildCommandPaletteEntries, fuzzyMatchCommand, filterCommandPaletteEntries }
+ * @exports { buildCommandPaletteTree, flattenCommandTree, fuzzyMatchCommand, filterCommandPaletteEntries }
  *
  * @see src/key-handler.js
  * @see src/overlays.js
  */
 
-export const COMMAND_CATEGORY_ORDER = ['Filters', 'Sort', 'Pages', 'Actions']
-
-const COMMANDS = [
-  // 📖 Filters
-  { id: 'filter-tier-all', category: 'Filters', label: 'Filter tiers: all', shortcut: 'T', keywords: ['filter', 'tier', 'all'] },
-  { id: 'filter-tier-splus', category: 'Filters', label: 'Filter tiers: S+', shortcut: null, keywords: ['filter', 'tier', 's+'] },
-  { id: 'filter-tier-s', category: 'Filters', label: 'Filter tiers: S', shortcut: null, keywords: ['filter', 'tier', 's'] },
-  { id: 'filter-tier-aplus', category: 'Filters', label: 'Filter tiers: A+', shortcut: null, keywords: ['filter', 'tier', 'a+'] },
-  { id: 'filter-tier-a', category: 'Filters', label: 'Filter tiers: A', shortcut: null, keywords: ['filter', 'tier', 'a'] },
-  { id: 'filter-tier-aminus', category: 'Filters', label: 'Filter tiers: A-', shortcut: null, keywords: ['filter', 'tier', 'a-'] },
-  { id: 'filter-tier-bplus', category: 'Filters', label: 'Filter tiers: B+', shortcut: null, keywords: ['filter', 'tier', 'b+'] },
-  { id: 'filter-tier-b', category: 'Filters', label: 'Filter tiers: B', shortcut: null, keywords: ['filter', 'tier', 'b'] },
-  { id: 'filter-tier-c', category: 'Filters', label: 'Filter tiers: C', shortcut: null, keywords: ['filter', 'tier', 'c'] },
-  { id: 'filter-provider-cycle', category: 'Filters', label: 'Filter provider: cycle', shortcut: 'D', keywords: ['filter', 'provider', 'origin'] },
-  { id: 'filter-configured-toggle', category: 'Filters', label: 'Toggle configured-only models', shortcut: 'E', keywords: ['filter', 'configured', 'keys'] },
-
-  // 📖 Sorting
-  { id: 'sort-rank', category: 'Sort', label: 'Sort by rank', shortcut: 'R', keywords: ['sort', 'rank'] },
-  { id: 'sort-tier', category: 'Sort', label: 'Sort by tier', shortcut: null, keywords: ['sort', 'tier'] },
-  { id: 'sort-provider', category: 'Sort', label: 'Sort by provider', shortcut: 'O', keywords: ['sort', 'origin', 'provider'] },
-  { id: 'sort-model', category: 'Sort', label: 'Sort by model name', shortcut: 'M', keywords: ['sort', 'model', 'name'] },
-  { id: 'sort-latest-ping', category: 'Sort', label: 'Sort by latest ping', shortcut: 'L', keywords: ['sort', 'latest', 'ping'] },
-  { id: 'sort-avg-ping', category: 'Sort', label: 'Sort by average ping', shortcut: 'A', keywords: ['sort', 'avg', 'average', 'ping'] },
-  { id: 'sort-swe', category: 'Sort', label: 'Sort by SWE score', shortcut: 'S', keywords: ['sort', 'swe', 'score'] },
-  { id: 'sort-ctx', category: 'Sort', label: 'Sort by context window', shortcut: 'C', keywords: ['sort', 'context', 'ctx'] },
-  { id: 'sort-health', category: 'Sort', label: 'Sort by health', shortcut: 'H', keywords: ['sort', 'health', 'condition'] },
-  { id: 'sort-verdict', category: 'Sort', label: 'Sort by verdict', shortcut: 'V', keywords: ['sort', 'verdict'] },
-  { id: 'sort-stability', category: 'Sort', label: 'Sort by stability', shortcut: 'B', keywords: ['sort', 'stability'] },
-  { id: 'sort-uptime', category: 'Sort', label: 'Sort by uptime', shortcut: 'U', keywords: ['sort', 'uptime'] },
-
-  // 📖 Pages / overlays
-  { id: 'open-settings', category: 'Pages', label: 'Open settings', shortcut: 'P', keywords: ['settings', 'config', 'api key'] },
-  { id: 'open-help', category: 'Pages', label: 'Open help', shortcut: 'K', keywords: ['help', 'shortcuts', 'hotkeys'] },
-  { id: 'open-changelog', category: 'Pages', label: 'Open changelog', shortcut: 'N', keywords: ['changelog', 'release'] },
-  { id: 'open-feedback', category: 'Pages', label: 'Open feedback', shortcut: 'I', keywords: ['feedback', 'bug', 'request'] },
-  { id: 'open-recommend', category: 'Pages', label: 'Open smart recommend', shortcut: 'Q', keywords: ['recommend', 'best model'] },
-  { id: 'open-install-endpoints', category: 'Pages', label: 'Open install endpoints', shortcut: 'Y', keywords: ['install', 'endpoints', 'providers'] },
-
-  // 📖 Actions
-  { id: 'action-cycle-theme', category: 'Actions', label: 'Cycle theme', shortcut: 'G', keywords: ['theme', 'dark', 'light', 'auto'] },
-  { id: 'action-cycle-tool-mode', category: 'Actions', label: 'Cycle tool mode', shortcut: 'Z', keywords: ['tool', 'mode', 'launcher'] },
-  { id: 'action-cycle-ping-mode', category: 'Actions', label: 'Cycle ping mode', shortcut: 'W', keywords: ['ping', 'cadence', 'speed', 'slow'] },
-  { id: 'action-toggle-favorite', category: 'Actions', label: 'Toggle favorite on selected model', shortcut: 'F', keywords: ['favorite', 'star'] },
-  { id: 'action-reset-view', category: 'Actions', label: 'Reset view settings', shortcut: 'Shift+R', keywords: ['reset', 'view', 'sort', 'filters'] },
+// 📖 Hierarchical command tree with categories and subcategories
+const COMMAND_TREE = [
+  {
+    id: 'filters',
+    label: '🔍 Filters',
+    icon: '🔍',
+    children: [
+      {
+        id: 'filter-tier',
+        label: 'Filter by tier',
+        icon: '📊',
+        children: [
+          { id: 'filter-tier-all', label: 'All tiers', shortcut: 'T', keywords: ['filter', 'tier', 'all'] },
+          { id: 'filter-tier-splus', label: 'S+ tier only', keywords: ['filter', 'tier', 's+'] },
+          { id: 'filter-tier-s', label: 'S tier only', keywords: ['filter', 'tier', 's'] },
+          { id: 'filter-tier-aplus', label: 'A+ tier only', keywords: ['filter', 'tier', 'a+'] },
+          { id: 'filter-tier-a', label: 'A tier only', keywords: ['filter', 'tier', 'a'] },
+          { id: 'filter-tier-aminus', label: 'A- tier only', keywords: ['filter', 'tier', 'a-'] },
+          { id: 'filter-tier-bplus', label: 'B+ tier only', keywords: ['filter', 'tier', 'b+'] },
+          { id: 'filter-tier-b', label: 'B tier only', keywords: ['filter', 'tier', 'b'] },
+          { id: 'filter-tier-c', label: 'C tier only', keywords: ['filter', 'tier', 'c'] },
+        ]
+      },
+      {
+        id: 'filter-provider',
+        label: 'Filter by provider',
+        icon: '🏢',
+        children: [
+          { id: 'filter-provider-cycle', label: 'Cycle provider', shortcut: 'D', keywords: ['filter', 'provider', 'origin'] },
+        ]
+      },
+      {
+        id: 'filter-other',
+        label: 'Other filters',
+        icon: '⚙️',
+        children: [
+          { id: 'filter-configured-toggle', label: 'Toggle configured-only', shortcut: 'E', keywords: ['filter', 'configured', 'keys'] },
+        ]
+      },
+    ]
+  },
+  {
+    id: 'sort',
+    label: '📶 Sort',
+    icon: '📶',
+    children: [
+      { id: 'sort-rank', label: 'Sort by rank', shortcut: 'R', keywords: ['sort', 'rank'] },
+      { id: 'sort-tier', label: 'Sort by tier', keywords: ['sort', 'tier'] },
+      { id: 'sort-provider', label: 'Sort by provider', shortcut: 'O', keywords: ['sort', 'origin', 'provider'] },
+      { id: 'sort-model', label: 'Sort by model', shortcut: 'M', keywords: ['sort', 'model', 'name'] },
+      { id: 'sort-latest-ping', label: 'Sort by latest ping', shortcut: 'L', keywords: ['sort', 'latest', 'ping'] },
+      { id: 'sort-avg-ping', label: 'Sort by avg ping', shortcut: 'A', keywords: ['sort', 'avg', 'average', 'ping'] },
+      { id: 'sort-swe', label: 'Sort by SWE score', shortcut: 'S', keywords: ['sort', 'swe', 'score'] },
+      { id: 'sort-ctx', label: 'Sort by context', shortcut: 'C', keywords: ['sort', 'context', 'ctx'] },
+      { id: 'sort-health', label: 'Sort by health', shortcut: 'H', keywords: ['sort', 'health', 'condition'] },
+      { id: 'sort-verdict', label: 'Sort by verdict', shortcut: 'V', keywords: ['sort', 'verdict'] },
+      { id: 'sort-stability', label: 'Sort by stability', shortcut: 'B', keywords: ['sort', 'stability'] },
+      { id: 'sort-uptime', label: 'Sort by uptime', shortcut: 'U', keywords: ['sort', 'uptime'] },
+    ]
+  },
+  {
+    id: 'pages',
+    label: '📄 Pages',
+    icon: '📄',
+    children: [
+      { id: 'open-settings', label: 'Settings', shortcut: 'P', keywords: ['settings', 'config', 'api key'] },
+      { id: 'open-help', label: 'Help', shortcut: 'K', keywords: ['help', 'shortcuts', 'hotkeys'] },
+      { id: 'open-changelog', label: 'Changelog', shortcut: 'N', keywords: ['changelog', 'release'] },
+      { id: 'open-feedback', label: 'Feedback', shortcut: 'I', keywords: ['feedback', 'bug', 'request'] },
+      { id: 'open-recommend', label: 'Smart recommend', shortcut: 'Q', keywords: ['recommend', 'best model'] },
+      { id: 'open-install-endpoints', label: 'Install endpoints', keywords: ['install', 'endpoints', 'providers'] },
+    ]
+  },
+  {
+    id: 'actions',
+    label: '⚡ Actions',
+    icon: '⚡',
+    children: [
+      { id: 'action-cycle-theme', label: 'Cycle theme', shortcut: 'G', keywords: ['theme', 'dark', 'light', 'auto'] },
+      { id: 'action-cycle-tool-mode', label: 'Cycle tool mode', shortcut: 'Z', keywords: ['tool', 'mode', 'launcher'] },
+      { id: 'action-cycle-ping-mode', label: 'Cycle ping mode', shortcut: 'W', keywords: ['ping', 'cadence', 'speed', 'slow'] },
+      { id: 'action-toggle-favorite', label: 'Toggle favorite', shortcut: 'F', keywords: ['favorite', 'star'] },
+      { id: 'action-reset-view', label: 'Reset view', shortcut: 'Shift+R', keywords: ['reset', 'view', 'sort', 'filters'] },
+    ]
+  },
 ]
+
+export function buildCommandPaletteTree() {
+  return COMMAND_TREE
+}
+
+/**
+ * 📖 Flatten the command tree into a list, respecting which nodes are expanded.
+ * @param {Array} tree - The command tree
+ * @param {Set} expandedIds - Set of IDs that are expanded
+ * @returns {Array} Flat list with type markers ('category' | 'subcategory' | 'command')
+ */
+export function flattenCommandTree(tree, expandedIds = new Set()) {
+  const result = []
+  
+  function traverse(nodes, depth = 0) {
+    for (const node of nodes) {
+      const isExpanded = expandedIds.has(node.id)
+      const hasChildren = Array.isArray(node.children) && node.children.length > 0
+      
+      if (hasChildren) {
+        result.push({
+          ...node,
+          type: depth === 0 ? 'category' : 'subcategory',
+          depth,
+          hasChildren,
+          isExpanded,
+        })
+        
+        if (isExpanded) {
+          traverse(node.children, depth + 1)
+        }
+      } else {
+        result.push({
+          ...node,
+          type: 'command',
+          depth,
+          hasChildren: false,
+          isExpanded: false,
+        })
+      }
+    }
+  }
+  
+  traverse(tree)
+  return result
+}
 
 const ID_TO_TIER = {
   'filter-tier-all': null,
@@ -71,8 +160,22 @@ const ID_TO_TIER = {
   'filter-tier-c': 'C',
 }
 
+/**
+ * 📖 Legacy function for backward compatibility - builds flat list from tree.
+ * 📖 Expands all categories so every command is searchable by fuzzyMatchCommand.
+ */
 export function buildCommandPaletteEntries() {
-  return COMMANDS.map((entry) => ({
+  // 📖 Collect every node id that has children so flattenCommandTree traverses into them.
+  const allIds = new Set()
+  function collectIds(nodes) {
+    for (const n of nodes) {
+      allIds.add(n.id)
+      if (Array.isArray(n.children)) collectIds(n.children)
+    }
+  }
+  collectIds(COMMAND_TREE)
+  const flat = flattenCommandTree(COMMAND_TREE, allIds)
+  return flat.map((entry) => ({
     ...entry,
     tierValue: Object.prototype.hasOwnProperty.call(ID_TO_TIER, entry.id) ? ID_TO_TIER[entry.id] : undefined,
   }))
@@ -126,15 +229,20 @@ export function fuzzyMatchCommand(query, text) {
 
 /**
  * 📖 Filter and rank command palette entries by fuzzy score.
- * @param {Array<{ id: string, label: string, category: string, keywords?: string[] }>} entries
+ * Now handles hierarchical structure with expandable categories.
+ * @param {Array} flatEntries - Flattened command tree entries
  * @param {string} query
- * @returns {Array<{ id: string, label: string, category: string, shortcut?: string|null, keywords?: string[], score: number, matchPositions: number[] }>}
+ * @returns {Array} Sorted and filtered entries with match scores
  */
-export function filterCommandPaletteEntries(entries, query) {
+export function filterCommandPaletteEntries(flatEntries, query) {
   const normalizedQuery = (query || '').trim()
+  
+  if (!normalizedQuery) {
+    return flatEntries
+  }
 
   const ranked = []
-  for (const entry of entries) {
+  for (const entry of flatEntries) {
     const labelMatch = fuzzyMatchCommand(normalizedQuery, entry.label)
     let bestScore = labelMatch.score
     let matchPositions = labelMatch.positions
@@ -145,7 +253,6 @@ export function filterCommandPaletteEntries(entries, query) {
         const keywordMatch = fuzzyMatchCommand(normalizedQuery, keyword)
         if (!keywordMatch.matched) continue
         matched = true
-        // 📖 Keyword matches should rank below direct label matches.
         const keywordScore = Math.max(1, keywordMatch.score - 7)
         if (keywordScore > bestScore) {
           bestScore = keywordScore
@@ -158,11 +265,24 @@ export function filterCommandPaletteEntries(entries, query) {
     ranked.push({ ...entry, score: bestScore, matchPositions })
   }
 
+  // Auto-expand categories that contain matches
+  const result = []
+  const idsToExpand = new Set()
+  
+  // First pass: mark all categories containing matched items
+  for (const entry of ranked) {
+    if (entry.type === 'command' && entry.matchPositions) {
+      // Find parent categories
+      let current = result.find(r => r.id === entry.id)
+      if (current) {
+        idsToExpand.add(entry.parentId)
+      }
+    }
+  }
+
   ranked.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score
-    const aCat = COMMAND_CATEGORY_ORDER.indexOf(a.category)
-    const bCat = COMMAND_CATEGORY_ORDER.indexOf(b.category)
-    if (aCat !== bCat) return aCat - bCat
+    if (a.depth !== b.depth) return a.depth - b.depth
     return a.label.localeCompare(b.label)
   })
 

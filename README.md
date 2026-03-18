@@ -179,7 +179,6 @@ Press **`Z`** in the TUI to cycle between tools without restarting.
 | `Ctrl+P` | Open command palette (search + run actions) |
 | `R/S/C/M/O/L/A/H/V/B/U` | Sort columns |
 | `P` | Settings (API keys, providers, updates, theme) |
-| `Y` | Install Endpoints (push provider into tool config) |
 | `Q` | Smart Recommend overlay |
 | `N` | Changelog |
 | `W` | Cycle ping cadence |

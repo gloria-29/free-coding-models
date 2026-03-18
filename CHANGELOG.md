@@ -2,6 +2,22 @@
 
 ---
 
+## 0.3.22
+
+### Added
+- **Hierarchical command palette navigation**: Ctrl+P now opens an improved command palette with expandable/collapsible categories and subcategories for better organization.
+- **Arrow key navigation in command palette**: Use left/right arrows to expand and collapse categories, up/down to navigate, Enter to execute or toggle.
+- **Rich color scheme for command palette**: Categories use bold blue headers, subcategories use bold text, commands show keyboard shortcuts.
+- **Visual expand/collapse indicators**: ▼ shows expanded categories, ▶ shows collapsed, • marks individual commands.
+- **Concise default view**: Categories are collapsed by default (except Filters) showing less detail on first open.
+- **NEW badge for Command Palette**: Footer now shows a bright neon-green `NEW ! CTRL+P Command Palette` badge to highlight the feature.
+
+### Changed
+- **Footer layout cleanup**: Added consistent spacing before `F Toggle Favorite`, moved `N Changelog • Ctrl+C Exit` to a dedicated final footer line for better readability.
+- **Removed Y key binding**: Install Endpoints is no longer a direct hotkey — accessible only via Settings (`P`) or Command Palette (`Ctrl+P`). The `Y` key is now free/unbound.
+- **Removed proxy notice from footer**: The "Proxy is temporarily disabled" banner has been fully retired from the TUI footer and its backing constant removed.
+- **Command palette fuzzy search fix**: `buildCommandPaletteEntries()` now expands all categories so child commands are visible to fuzzy search.
+
 ## 0.3.21
 
 ### Changed

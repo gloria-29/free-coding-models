@@ -528,18 +528,16 @@ export function createOverlayRenderers(state, deps) {
 
   // ─── Command palette renderer ──────────────────────────────────────────────
   // 📖 renderCommandPalette draws a centered floating modal over the live table.
-  // 📖 It returns cursor-positioned ANSI rows instead of replacing the full screen,
-  // 📖 so ping updates continue to animate in the background behind the palette.
+  // 📖 Supports hierarchical categories with expand/collapse and rich colors.
   function renderCommandPalette() {
     const terminalRows = state.terminalRows || 24
     const terminalCols = state.terminalCols || 80
-    const panelWidth = Math.max(44, Math.min(96, terminalCols - 8))
-    const panelInnerWidth = Math.max(28, panelWidth - 4)
+    const panelWidth = Math.max(52, Math.min(100, terminalCols - 8))
+    const panelInnerWidth = Math.max(32, panelWidth - 4)
     const panelPad = 2
     const panelOuterWidth = panelWidth + (panelPad * 2)
-    const footerRowCount = 2
-    const headerRowCount = 3
-    const bodyRows = Math.max(6, Math.min(16, terminalRows - 12))
+    const headerRowCount = 4
+    const bodyRows = Math.max(8, Math.min(18, terminalRows - 12))
 
     const truncatePlain = (text, width) => {
       if (width <= 1) return ''
@@ -559,30 +557,42 @@ export function createOverlayRenderers(state, deps) {
     }
 
     const allResults = Array.isArray(state.commandPaletteResults) ? state.commandPaletteResults.slice(0, 80) : []
-    const groupedLines = []
+    const panelLines = []
     const cursorLineByRow = {}
-    let category = null
 
     if (allResults.length === 0) {
-      groupedLines.push(themeColors.dim('  No command found. Try a broader query.'))
+      panelLines.push(themeColors.dim('  No commands found. Try a different search.'))
     } else {
       for (let idx = 0; idx < allResults.length; idx++) {
         const entry = allResults[idx]
-        if (entry.category !== category) {
-          category = entry.category
-          groupedLines.push(themeColors.textBold(` ${category}`))
+        const isCursor = idx === state.commandPaletteCursor
+        
+        const indent = '  '.repeat(entry.depth || 0)
+        const expandIndicator = entry.hasChildren
+          ? (entry.isExpanded ? themeColors.infoBold('▼') : themeColors.dim('▶'))
+          : themeColors.dim('•')
+        
+        const rowLabel = entry.icon ? `${entry.icon} ${entry.label}` : entry.label
+        const plainLabel = truncatePlain(rowLabel, panelInnerWidth - indent.length - 4)
+        const label = entry.matchPositions ? highlightMatch(plainLabel, entry.matchPositions) : plainLabel
+        
+        let rowLine
+        if (entry.type === 'category') {
+          rowLine = `${indent}${expandIndicator} ${themeColors.headerBold(label)}`
+        } else if (entry.type === 'subcategory') {
+          rowLine = `${indent}${expandIndicator} ${themeColors.textBold(label)}`
+        } else {
+          const shortcut = entry.shortcut ? themeColors.dim(` (${entry.shortcut})`) : ''
+          rowLine = `${indent}  ${expandIndicator} ${label}${shortcut}`
         }
 
-        const isCursor = idx === state.commandPaletteCursor
-        const pointer = isCursor ? themeColors.accentBold('  ❯ ') : themeColors.dim('    ')
-        const shortcutText = entry.shortcut ? themeColors.dim(entry.shortcut) : ''
-        const shortcutWidth = entry.shortcut ? Math.min(16, displayWidth(entry.shortcut)) : 0
-        const labelMax = Math.max(12, panelInnerWidth - 8 - shortcutWidth)
-        const plainLabel = truncatePlain(entry.label, labelMax)
-        const label = highlightMatch(plainLabel, entry.matchPositions)
-        const row = `${pointer}${padEndDisplay(label, labelMax)}${entry.shortcut ? ` ${shortcutText}` : ''}`
-        cursorLineByRow[idx] = groupedLines.length
-        groupedLines.push(isCursor ? themeColors.bgCursor(row) : row)
+        cursorLineByRow[idx] = panelLines.length
+        
+        if (isCursor) {
+          panelLines.push(themeColors.bgCursor(rowLine))
+        } else {
+          panelLines.push(rowLine)
+        }
       }
     }
 
@@ -590,44 +600,43 @@ export function createOverlayRenderers(state, deps) {
     state.commandPaletteScrollOffset = keepOverlayTargetVisible(
       state.commandPaletteScrollOffset,
       targetLine,
-      groupedLines.length,
+      panelLines.length,
       bodyRows
     )
-    const { visible, offset } = sliceOverlayLines(groupedLines, state.commandPaletteScrollOffset, bodyRows)
+    const { visible, offset } = sliceOverlayLines(panelLines, state.commandPaletteScrollOffset, bodyRows)
     state.commandPaletteScrollOffset = offset
 
     const query = state.commandPaletteQuery || ''
     const queryWithCursor = query.length > 0
       ? themeColors.textBold(`${query}▏`)
-      : themeColors.dim('type a command…') + themeColors.accentBold('▏')
+      : themeColors.dim('Search commands…') + themeColors.accentBold('▏')
 
-    const panelLines = []
-    const title = themeColors.textBold('Command Palette')
+    const headerLines = []
+    const title = themeColors.headerBold('⚡ Command Palette')
     const titleLeft = ` ${title}`
-    const titleRight = themeColors.dim('Esc close')
-    const titleWidth = Math.max(1, panelInnerWidth - 1 - displayWidth('Esc close'))
-    panelLines.push(`${padEndDisplay(titleLeft, titleWidth)} ${titleRight}`)
-    panelLines.push(` ${padEndDisplay(`> ${queryWithCursor}`, panelInnerWidth)}`)
-    panelLines.push(themeColors.dim(` ${'-'.repeat(Math.max(1, panelInnerWidth))}`))
+    const titleRight = themeColors.dim('Esc')
+    const titleWidth = Math.max(1, panelInnerWidth - 1 - displayWidth('Esc'))
+    headerLines.push(`${padEndDisplay(titleLeft, titleWidth)} ${titleRight}`)
+    headerLines.push(` ${padEndDisplay(`> ${queryWithCursor}`, panelInnerWidth)}`)
+    headerLines.push(themeColors.dim(` ${'─'.repeat(Math.max(1, panelInnerWidth))}`))
 
-    for (const line of visible) {
-      panelLines.push(` ${padEndDisplay(line, panelInnerWidth)}`)
+    const footerLines = [
+      themeColors.dim(` ${'─'.repeat(Math.max(1, panelInnerWidth))}`),
+      ` ${padEndDisplay(themeColors.dim('↵ Select • ← → Expand'), panelInnerWidth)}`,
+      ` ${padEndDisplay(themeColors.dim('↑↓ Navigate • Type search'), panelInnerWidth)}`,
+    ]
+
+    const allPanelLines = [...headerLines, ...visible, ...footerLines]
+    
+    while (allPanelLines.length < bodyRows + headerRowCount + 3) {
+      allPanelLines.splice(headerLines.length + visible.length, 0, ` ${' '.repeat(panelInnerWidth)}`)
     }
-
-    // 📖 Keep panel body stable by filling with blank rows when result list is short.
-    while (panelLines.length < bodyRows + headerRowCount) {
-      panelLines.push(` ${' '.repeat(panelInnerWidth)}`)
-    }
-
-    panelLines.push(themeColors.dim(` ${'-'.repeat(Math.max(1, panelInnerWidth))}`))
-    panelLines.push(` ${padEndDisplay(themeColors.dim('↑↓ navigate • Enter run • Type to search'), panelInnerWidth)}`)
-    panelLines.push(` ${padEndDisplay(themeColors.dim('PgUp/PgDn • Home/End'), panelInnerWidth)}`)
 
     const blankPaddedLine = ' '.repeat(panelOuterWidth)
     const paddedPanelLines = [
       blankPaddedLine,
       blankPaddedLine,
-      ...panelLines.map((line) => `${' '.repeat(panelPad)}${padEndDisplay(line, panelWidth)}${' '.repeat(panelPad)}`),
+      ...allPanelLines.map((line) => `${' '.repeat(panelPad)}${padEndDisplay(line, panelWidth)}${' '.repeat(panelPad)}`),
       blankPaddedLine,
       blankPaddedLine,
     ]
@@ -641,8 +650,6 @@ export function createOverlayRenderers(state, deps) {
       return themeColors.overlayBgCommandPalette(padded)
     })
 
-    // 📖 Absolute cursor positioning overlays the palette on top of the existing table.
-    // 📖 The next frame starts with ALT_HOME, so this remains stable without manual cleanup.
     return tintedLines
       .map((line, idx) => `\x1b[${top + idx};${left}H${line}`)
       .join('')
@@ -720,7 +727,6 @@ export function createOverlayRenderers(state, deps) {
     lines.push(`  ${key('E')}  Toggle configured models only  ${hint('(enabled by default)')}`)
     lines.push(`  ${key('Z')}  Cycle tool mode  ${hint('(OpenCode → Desktop → OpenClaw → Crush → Goose → Pi → Aider → Qwen → OpenHands → Amp)')}`)
     lines.push(`  ${key('F')}  Toggle favorite on selected row  ${hint('(⭐ pinned at top, persisted)')}`)
-    lines.push(`  ${key('Y')}  Install endpoints  ${hint('(provider catalog → compatible tools, direct provider only)')}`)
     lines.push(`  ${key('Q')}  Smart Recommend  ${hint('(🎯 find the best model for your task — questionnaire + live analysis)')}`)
     lines.push(`  ${key('G')}  Cycle theme  ${hint('(auto → dark → light)')}`)
     lines.push(`  ${themeColors.errorBold('I')}  Feedback, bugs & requests  ${hint('(📝 send anonymous feedback, bug reports, or feature requests)')}`)

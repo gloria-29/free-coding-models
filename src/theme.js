@@ -278,11 +278,13 @@ function paintBg(bgRgb, text, fgRgb = null, options = {}) {
 export const themeColors = {
   text: (text) => paintRgb(currentPalette().text, text),
   textBold: (text) => paintRgb(currentPalette().textStrong, text, { bold: true }),
+  headerBold: (text) => paintRgb([142, 200, 255], text, { bold: true }),
   dim: (text) => paintRgb(currentPalette().muted, text),
   soft: (text) => paintRgb(currentPalette().soft, text),
   accent: (text) => paintRgb(currentPalette().accent, text),
   accentBold: (text) => paintRgb(currentPalette().accentStrong, text, { bold: true }),
   info: (text) => paintRgb(currentPalette().info, text),
+  infoBold: (text) => paintRgb([100, 180, 255], text, { bold: true }),
   success: (text) => paintRgb(currentPalette().success, text),
   successBold: (text) => paintRgb(currentPalette().successStrong, text, { bold: true }),
   warning: (text) => paintRgb(currentPalette().warning, text),
