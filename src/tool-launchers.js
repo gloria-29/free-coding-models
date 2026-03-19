@@ -41,7 +41,7 @@ import { sources } from '../sources.js'
 import { PROVIDER_COLOR } from './render-table.js'
 import { getApiKey } from './config.js'
 import { ENV_VAR_NAMES, isWindows } from './provider-metadata.js'
-import { getToolMeta } from './tool-metadata.js'
+import { getToolMeta, TOOL_METADATA } from './tool-metadata.js'
 import { PROVIDER_METADATA } from './provider-metadata.js'
 import { resolveToolBinaryPath } from './tool-bootstrap.js'
 
@@ -378,6 +378,57 @@ function writeOpenHandsEnv(model, apiKey, baseUrl, paths = getDefaultToolPaths()
   return { filePath, backupPath }
 }
 
+/**
+ * 📖 writeRovoConfig - Configure Rovo Dev CLI model selection
+ *
+ * Rovo Dev CLI uses ~/.rovodev/config.yml for configuration.
+ * We write the model ID to the config file before launching.
+ *
+ * @param {Object} model - Selected model with modelId
+ * @param {string} configPath - Path to Rovo config file
+ * @returns {{ filePath: string, backupPath: string | null }}
+ */
+function writeRovoConfig(model, configPath = join(homedir(), '.rovodev', 'config.yml')) {
+  const backupPath = backupIfExists(configPath)
+  const config = {
+    agent: {
+      modelId: model.modelId,
+    },
+  }
+
+  ensureDir(configPath)
+  writeFileSync(configPath, `agent:\n  modelId: "${model.modelId}"\n`)
+  return { filePath: configPath, backupPath }
+}
+
+/**
+ * 📖 buildGeminiEnv - Build environment variables for Gemini CLI
+ *
+ * Gemini CLI supports OpenAI-compatible APIs via environment variables:
+ * - GEMINI_API_BASE_URL: Custom API endpoint
+ * - GEMINI_API_KEY: API key for custom endpoint
+ *
+ * @param {Object} model - Selected model with providerKey
+ * @param {Object} config - Full app config
+ * @param {Object} options - Env options
+ * @returns {NodeJS.ProcessEnv}
+ */
+function buildGeminiEnv(model, config, options = {}) {
+  const providerKey = model.providerKey || 'gemini'
+  const apiKey = getApiKey(config, providerKey)
+  const baseUrl = getProviderBaseUrl(providerKey)
+
+  const env = cloneInheritedEnv(process.env, SANITIZED_TOOL_ENV_KEYS)
+
+  // If we have a custom API key and base URL, configure OpenAI-compatible mode
+  if (apiKey && baseUrl && options.includeProviderEnv) {
+    env.GEMINI_API_BASE_URL = baseUrl
+    env.GEMINI_API_KEY = apiKey
+  }
+
+  return env
+}
+
 function printConfigArtifacts(toolName, artifacts = []) {
   for (const artifact of artifacts) {
     if (!artifact?.path) continue
@@ -420,7 +471,9 @@ export function prepareExternalToolLaunch(mode, model, config, options = {}) {
     inheritedEnv: options.inheritedEnv,
   })
 
-  if (!apiKey && mode !== 'amp') {
+  const isCliOnlyTool = TOOL_METADATA[mode]?.cliOnly === true
+
+  if (!apiKey && mode !== 'amp' && !isCliOnlyTool) {
     const providerRgb = PROVIDER_COLOR[model.providerKey] ?? [105, 190, 245]
     const providerName = sources[model.providerKey]?.name || model.providerKey
     const coloredProviderName = chalk.bold.rgb(...providerRgb)(providerName)
@@ -544,6 +597,34 @@ export function prepareExternalToolLaunch(mode, model, config, options = {}) {
     }
   }
 
+  if (mode === 'rovo') {
+    const result = writeRovoConfig(model, join(homedir(), '.rovodev', 'config.yml'), paths)
+    console.log(chalk.dim(`  📖 Rovo Dev CLI configured with model: ${model.modelId}`))
+    return {
+      command: 'acli',
+      args: ['rovodev', 'run'],
+      env,
+      apiKey: null,
+      baseUrl: null,
+      meta,
+      configArtifacts: [{ path: result.filePath, backupPath: result.backupPath, label: 'config' }],
+    }
+  }
+
+  if (mode === 'gemini') {
+    const geminiEnv = buildGeminiEnv(model, config, { includeProviderEnv: options.includeProviderEnv })
+    console.log(chalk.dim(`  📖 Gemini CLI will use model: ${model.modelId}`))
+    return {
+      command: 'gemini',
+      args: [],
+      env: { ...env, ...geminiEnv },
+      apiKey: geminiEnv.GEMINI_API_KEY || null,
+      baseUrl: geminiEnv.GEMINI_API_BASE_URL || null,
+      meta,
+      configArtifacts: [],
+    }
+  }
+
   return {
     blocked: true,
     exitCode: 1,
@@ -595,6 +676,16 @@ export async function startExternalTool(mode, model, config) {
 
   if (mode === 'pi') {
     // 📖 Pi supports --provider and --model flags for guaranteed auto-selection
+    return spawnCommand(resolveLaunchCommand(mode, launchPlan.command), launchPlan.args, launchPlan.env)
+  }
+
+  if (mode === 'rovo') {
+    console.log(chalk.dim(`  📖 Launching Rovo Dev CLI in interactive mode...`))
+    return spawnCommand(resolveLaunchCommand(mode, launchPlan.command), launchPlan.args, launchPlan.env)
+  }
+
+  if (mode === 'gemini') {
+    console.log(chalk.dim(`  📖 Launching Gemini CLI...`))
     return spawnCommand(resolveLaunchCommand(mode, launchPlan.command), launchPlan.args, launchPlan.env)
   }
 

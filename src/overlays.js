@@ -1217,6 +1217,102 @@ export function createOverlayRenderers(state, deps) {
     if (state.recommendPingTimer) { clearInterval(state.recommendPingTimer); state.recommendPingTimer = null }
   }
 
+  // ─── Incompatible fallback overlay ─────────────────────────────────────────
+  // 📖 renderIncompatibleFallback shows when user presses Enter on a model that
+  // 📖 is NOT compatible with the active tool. Two sections:
+  // 📖   Section 1: "Switch to a compatible tool" — lists tools the model CAN run on
+  // 📖   Section 2: "Use a similar model" — lists SWE-similar models compatible with current tool
+  // 📖 Cursor navigates a flat list across both sections. Enter executes, Esc cancels.
+  function renderIncompatibleFallback() {
+    const EL = '\x1b[K'
+    const lines = []
+    const cursorLineByRow = {}
+
+    const model = state.incompatibleFallbackModel
+    const tools = state.incompatibleFallbackTools || []
+    const similarModels = state.incompatibleFallbackSimilarModels || []
+    const totalItems = tools.length + similarModels.length
+    const activeMeta = getToolMeta(state.mode)
+
+    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')}`)
+    lines.push(`  ${chalk.bold('⚠️  Incompatible Model')}`)
+    lines.push('')
+
+    if (!model) {
+      lines.push(chalk.red('  No model data available.'))
+      lines.push('')
+      lines.push(chalk.dim('  Esc Close'))
+    } else {
+      // 📖 Header: explain why it's incompatible
+      const tierFn = TIER_COLOR[model.tier] ?? ((text) => themeColors.text(text))
+      lines.push(`  ${themeColors.textBold(model.label)}  ${tierFn(model.tier)}`)
+      lines.push(chalk.dim(`  This model cannot run on ${activeMeta.emoji} ${activeMeta.label}.`))
+      lines.push('')
+
+      // 📖 Section 1: Switch to a compatible tool
+      if (tools.length > 0) {
+        lines.push(`  ${themeColors.textBold('Switch to a compatible tool:')}`)
+        lines.push('')
+
+        for (let i = 0; i < tools.length; i++) {
+          const toolKey = tools[i]
+          const meta = getToolMeta(toolKey)
+          const [r, g, b] = meta.color || [200, 200, 200]
+          const coloredLabel = chalk.rgb(r, g, b)(`${meta.emoji} ${meta.label}`)
+          const isCursor = state.incompatibleFallbackCursor === i
+          const bullet = isCursor ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+          const row = `${bullet}${coloredLabel}`
+          cursorLineByRow[i] = lines.length
+          lines.push(isCursor ? themeColors.bgCursorInstall(row) : row)
+        }
+        lines.push('')
+      }
+
+      // 📖 Section 2: Use a similar model
+      if (similarModels.length > 0) {
+        lines.push(`  ${themeColors.textBold('Or pick a similar model for')} ${activeMeta.emoji} ${themeColors.textBold(activeMeta.label + ':')}`)
+        lines.push('')
+
+        for (let i = 0; i < similarModels.length; i++) {
+          const sm = similarModels[i]
+          const flatIdx = tools.length + i
+          const tierFnSm = TIER_COLOR[sm.tier] ?? ((text) => themeColors.text(text))
+          const isCursor = state.incompatibleFallbackCursor === flatIdx
+          const bullet = isCursor ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+          const sweLabel = sm.sweScore !== '-' ? `SWE ${sm.sweScore}` : 'SWE —'
+          const row = `${bullet}${themeColors.textBold(sm.label)}  ${tierFnSm(sm.tier)}  ${chalk.dim(sweLabel)}`
+          cursorLineByRow[flatIdx] = lines.length
+          lines.push(isCursor ? themeColors.bgCursorInstall(row) : row)
+        }
+        lines.push('')
+      }
+
+      if (totalItems === 0) {
+        lines.push(chalk.yellow('  No compatible tools or similar models found.'))
+        lines.push('')
+      }
+
+      lines.push(chalk.dim('  ↑↓ Navigate  •  Enter Confirm  •  Esc Cancel'))
+    }
+
+    lines.push('')
+
+    // 📖 Scroll management — same pattern as other overlays
+    const targetLine = cursorLineByRow[state.incompatibleFallbackCursor] ?? 0
+    state.incompatibleFallbackScrollOffset = keepOverlayTargetVisible(
+      state.incompatibleFallbackScrollOffset,
+      targetLine,
+      lines.length,
+      state.terminalRows
+    )
+    const { visible, offset } = sliceOverlayLines(lines, state.incompatibleFallbackScrollOffset, state.terminalRows)
+    state.incompatibleFallbackScrollOffset = offset
+
+    const tintedLines = tintOverlayLines(visible, themeColors.overlayBgSettings, state.terminalCols)
+    const cleared = tintedLines.map(l => l + EL)
+    return cleared.join('\n')
+  }
+
   return {
     renderSettings,
     renderInstallEndpoints,
@@ -1226,6 +1322,7 @@ export function createOverlayRenderers(state, deps) {
     renderRecommend,
     renderFeedback,
     renderChangelog,
+    renderIncompatibleFallback,
     startRecommendAnalysis,
     stopRecommendAnalysis,
   }

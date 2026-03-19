@@ -28,13 +28,15 @@ const TOOL_MODE_DESCRIPTIONS = {
   qwen: 'Launch Qwen Code using the selected provider model.',
   openhands: 'Launch OpenHands with the selected model endpoint.',
   amp: 'Launch Amp with this model as active target.',
+  rovo: 'Rovo Dev CLI model (launch with Rovo tool only).',
+  gemini: 'Gemini CLI model (launch with Gemini tool only).',
 }
 
 const TOOL_MODE_COMMANDS = TOOL_MODE_ORDER.map((toolMode) => {
   const meta = TOOL_METADATA[toolMode] || { label: toolMode, emoji: '🧰' }
   return {
     id: `action-set-tool-${toolMode}`,
-    label: meta.label,
+    label: `${meta.emoji} ${meta.label}`,
     toolMode,
     icon: meta.emoji,
     description: TOOL_MODE_DESCRIPTIONS[toolMode] || 'Set this as the active launch target.',

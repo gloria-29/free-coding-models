@@ -233,6 +233,8 @@ export async function runApp(cliArgs, config) {
       openhands: cliArgs.openHandsMode,
       amp: cliArgs.ampMode,
       pi: cliArgs.piMode,
+      rovo: cliArgs.rovoMode,
+      gemini: cliArgs.geminiMode,
     }
     return flagByMode[toolMode] === true
   })
@@ -389,7 +391,7 @@ export async function runApp(cliArgs, config) {
       terminalCols: process.stdout.columns || 80, // 📖 Current terminal width
       widthWarningStartedAt: (process.stdout.columns || 80) < WIDTH_WARNING_MIN_COLS ? now : null, // 📖 Start immediately in very narrow viewports.
     widthWarningDismissed: false, // 📖 Esc hides the narrow-terminal warning early for the current narrow-width session.
-    widthWarningShowCount: 0, // 📖 Counter for how many times the narrow-terminal warning has been shown (max 2 per session).
+    widthWarningShowCount: 0, // 📖 No longer used — kept for backward compatibility. Warning now shows every time terminal is too small.
     // 📖 Settings screen state (P key opens it)
     settingsOpen: false,          // 📖 Whether settings overlay is active
     settingsCursor: 0,            // 📖 Which provider row is selected in settings
@@ -434,6 +436,15 @@ export async function runApp(cliArgs, config) {
     toolInstallPromptModel: null,
     toolInstallPromptPlan: null,
     toolInstallPromptErrorMsg: null,
+    // 📖 Incompatible model fallback overlay — shown when user presses Enter on a red-highlighted model.
+    // 📖 Offers two options: switch to a compatible tool, or pick a similar SWE-scored model.
+    incompatibleFallbackOpen: false,
+    incompatibleFallbackCursor: 0,
+    incompatibleFallbackScrollOffset: 0,
+    incompatibleFallbackModel: null,        // 📖 The incompatible model the user tried to launch
+    incompatibleFallbackTools: [],           // 📖 Compatible tools for the selected model
+    incompatibleFallbackSimilarModels: [],   // 📖 Similar SWE models compatible with current tool
+    incompatibleFallbackSection: 'tools',    // 📖 'tools' or 'models' — which section cursor is in
     // 📖 Smart Recommend overlay state (Q key opens it)
     recommendOpen: false,         // 📖 Whether the recommend overlay is active
     recommendPhase: 'questionnaire', // 📖 'questionnaire'|'analyzing'|'results' — current phase
@@ -472,7 +483,6 @@ export async function runApp(cliArgs, config) {
       if (prevCols >= WIDTH_WARNING_MIN_COLS || state.widthWarningDismissed) {
         state.widthWarningStartedAt = Date.now()
         state.widthWarningDismissed = false
-        state.widthWarningShowCount++ // 📖 Increment counter when showing the warning again
       } else if (!state.widthWarningStartedAt) {
         state.widthWarningStartedAt = Date.now()
       }
@@ -684,7 +694,11 @@ export async function runApp(cliArgs, config) {
         r.hidden = false
         return
       }
-      const unconfiguredHide = state.hideUnconfiguredModels && !getApiKey(state.config, r.providerKey)
+      // 📖 CLI-only tools (rovo, gemini) and Zen models don't need traditional API keys —
+      // 📖 they authenticate via their own CLI login flow, so "configured only" should never hide them.
+      const providerMeta = PROVIDER_METADATA[r.providerKey]
+      const noKeyNeeded = providerMeta?.cliOnly || providerMeta?.zenOnly
+      const unconfiguredHide = state.hideUnconfiguredModels && !noKeyNeeded && !getApiKey(state.config, r.providerKey)
       if (unconfiguredHide) {
         r.hidden = true
         return
@@ -800,6 +814,7 @@ export async function runApp(cliArgs, config) {
     startOpenCode,
     startExternalTool,
     getToolModeOrder,
+    getToolMeta,
     getToolInstallPlan,
     isToolInstalled,
     installToolWithPlan,
@@ -862,7 +877,7 @@ export async function runApp(cliArgs, config) {
     refreshAutoPingMode()
     state.frame++
     // 📖 Cache visible+sorted models each frame so Enter handler always matches the display
-    if (!state.settingsOpen && !state.installEndpointsOpen && !state.toolInstallPromptOpen && !state.recommendOpen && !state.feedbackOpen && !state.changelogOpen && !state.commandPaletteOpen) {
+    if (!state.settingsOpen && !state.installEndpointsOpen && !state.toolInstallPromptOpen && !state.incompatibleFallbackOpen && !state.recommendOpen && !state.feedbackOpen && !state.changelogOpen && !state.commandPaletteOpen) {
       const visible = state.results.filter(r => !r.hidden)
       state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection, {
         pinFavorites: state.favoritesPinnedAndSticky,
@@ -945,6 +960,8 @@ export async function runApp(cliArgs, config) {
         ? overlays.renderInstallEndpoints()
       : state.toolInstallPromptOpen
         ? overlays.renderToolInstallPrompt()
+      : state.incompatibleFallbackOpen
+        ? overlays.renderIncompatibleFallback()
       : state.commandPaletteOpen
         ? tableContent + overlays.renderCommandPalette()
       : state.recommendOpen
@@ -975,7 +992,7 @@ export async function runApp(cliArgs, config) {
     pinFavorites: state.favoritesPinnedAndSticky,
   })
 
-  process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, null, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, false, state.startupLatestVersion, state.versionAlertsEnabled, state.favoritesPinnedAndSticky, state.customTextFilter))
+      process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, null, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, false, state.startupLatestVersion, state.versionAlertsEnabled, state.favoritesPinnedAndSticky, state.customTextFilter))
   if (process.stdout.isTTY) {
     process.stdout.flush && process.stdout.flush()
   }

@@ -2,15 +2,15 @@
   <img src="https://img.shields.io/npm/v/free-coding-models?color=76b900&label=npm&logo=npm" alt="npm version">
   <img src="https://img.shields.io/node/v/free-coding-models?color=76b900&logo=node.js" alt="node version">
   <img src="https://img.shields.io/npm/l/free-coding-models?color=76b900" alt="license">
-  <img src="https://img.shields.io/badge/models-160-76b900?logo=nvidia" alt="models count">
-  <img src="https://img.shields.io/badge/providers-20-blue" alt="providers count">
+  <img src="https://img.shields.io/badge/models-174-76b900?logo=nvidia" alt="models count">
+  <img src="https://img.shields.io/badge/providers-23-blue" alt="providers count">
 </p>
 
 <h1 align="center">free-coding-models</h1>
 
 <p align="center">
   <strong>Find the fastest free coding model in seconds</strong><br>
-  <sub>Ping 160 models across 20 AI Free providers in real-time </sub><br><sub> Install Free API endpoints to your favorite AI coding tool: <br>OpenCode, OpenClaw, Crush, Goose, Aider, Qwen Code, OpenHands, Amp or Pi in one keystroke</sub>
+  <sub>Ping 174 models across 23 AI Free providers in real-time </sub><br><sub> Install Free API endpoints to your favorite AI coding tool: <br>OpenCode, OpenClaw, Crush, Goose, Aider, Qwen Code, OpenHands, Amp or Pi in one keystroke</sub>
 </p>
 
 
@@ -47,7 +47,7 @@ create a free account on one of the [providers](#-list-of-free-ai-providers)
 
 ## 💡 Why this tool?
 
-There are **160+ free coding models** scattered across 20 providers. Which one is fastest right now? Which one is actually stable versus just lucky on the last ping?
+There are **174+ free coding models** scattered across 23 providers. Which one is fastest right now? Which one is actually stable versus just lucky on the last ping?
 
 This CLI pings them all in parallel, shows live latency, and calculates a **live Stability Score (0-100)**. Average latency alone is misleading if a model randomly spikes to 6 seconds; the stability score measures true reliability by combining **p95 latency** (30%), **jitter/variance** (30%), **spike rate** (20%), and **uptime** (20%). 
 
@@ -61,7 +61,7 @@ It then writes the model you pick directly into your coding tool's config — so
 
 Create a free account on one provider below to get started:
 
-**160 coding models** across 20 providers, ranked by [SWE-bench Verified](https://www.swebench.com).
+**174 coding models** across 23 providers, ranked by [SWE-bench Verified](https://www.swebench.com).
 
 | Provider | Models | Tier range | Free tier | Env var |
 |----------|--------|-----------|-----------|--------|
@@ -85,6 +85,9 @@ Create a free account on one provider below to get started:
 | [Cloudflare Workers AI](https://dash.cloudflare.com) | 6 | S → B | Free: 10k neurons/day, text-gen 300 RPM | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
 | [Perplexity API](https://www.perplexity.ai/settings/api) | 4 | A+ → B | Tiered limits by spend (default ~50 RPM) | `PERPLEXITY_API_KEY` |
 | [Replicate](https://replicate.com/account/api-tokens) | 1 | A- | 6 req/min (no payment) – up to 3,000 RPM with payment | `REPLICATE_API_TOKEN` |
+| [Rovo Dev CLI](https://www.atlassian.com/rovo) | 1 | S+ | 5M tokens/day (beta) | CLI tool 🔧 |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 3 | S+ → A+ | 1,000 req/day | CLI tool 🌙 |
+| [OpenCode Zen](https://opencode.ai/zen) | 8 | S+ → A+ | Free with OpenCode account | Zen models ✨ |
 
 > 💡 One key is enough. Add more at any time with **`P`** inside the TUI.
 
@@ -167,8 +170,58 @@ free-coding-models --openclaw --origin groq
 | `--openhands` | OpenHands |
 | `--amp` | Amp |
 | `--pi` | Pi |
+| `--rovo` | Rovo Dev CLI |
+| `--gemini` | Gemini CLI |
 
 Press **`Z`** in the TUI to cycle between tools without restarting.
+
+### CLI-Only Tools
+
+**Rovo Dev CLI** 🔧
+- Provider: [Atlassian Rovo](https://www.atlassian.com/rovo)
+- Install: [Installation Guide](https://support.atlassian.com/rovo/docs/install-and-run-rovo-dev-cli-on-your-device/)
+- Free tier: 5M tokens/day (beta, requires Atlassian account)
+- Model: Claude Sonnet 4 (72.7% SWE-bench)
+- Launch: `free-coding-models --rovo` or press `Z` until Rovo mode
+- Features: Jira/Confluence integration, MCP server support
+
+**Gemini CLI** 🌙
+- Provider: [Google Gemini](https://github.com/google-gemini/gemini-cli)
+- Install: `npm install -g @google/gemini-cli`
+- Free tier: 1,000 requests/day (personal Google account, no credit card)
+- Models: Gemini 3 Pro (76.2% SWE-bench), Gemini 2.5 Pro, Gemini 2.5 Flash
+- Launch: `free-coding-models --gemini` or press `Z` until Gemini mode
+- Features: OpenAI-compatible API support, MCP server support, Google Search grounding
+
+**Note:** When launching these tools via `Z` key or command palette, if the current mode doesn't match the tool, you'll see a confirmation alert asking to switch to the correct tool before launching.
+
+### OpenCode Zen Free Models
+
+[OpenCode Zen](https://opencode.ai/zen) is a hosted AI gateway offering 8 free coding models exclusively through OpenCode CLI and OpenCode Desktop. These models are **not** available through other tools.
+
+| Model | Tier | SWE-bench | Context |
+|-------|------|-----------|---------|
+| Big Pickle | S+ | 72.0% | 200k |
+| MiniMax M2.5 Free | S+ | 80.2% | 200k |
+| MiMo V2 Pro Free | S+ | 78.0% | 1M |
+| MiMo V2 Omni Free | S | 64.0% | 128k |
+| MiMo V2 Flash Free | S+ | 73.4% | 256k |
+| Nemotron 3 Super Free | A+ | 52.0% | 128k |
+| GPT 5 Nano | S | 65.0% | 128k |
+| Trinity Large Preview Free | S | 62.0% | 128k |
+
+To use Zen models: sign up at [opencode.ai/auth](https://opencode.ai/auth) and enter your Zen API key via `P` (Settings). Zen models appear in the main table and auto-switch to OpenCode CLI on launch.
+
+### Tool Compatibility
+
+The TUI shows a **"Compatible with"** column displaying colored single-letter initials for each supported tool. When a tool mode is active (via `Z`), models incompatible with that tool are highlighted with a dark red background so you can instantly see which models work with your current tool.
+
+| Model Type | Compatible Tools |
+|------------|-----------------|
+| Regular (NVIDIA, Groq, etc.) | All tools except Rovo and Gemini |
+| Rovo | Rovo Dev CLI only |
+| Gemini | Gemini CLI only |
+| OpenCode Zen | OpenCode CLI and OpenCode Desktop only |
 
 → **[Full flags reference](./docs/flags.md)**
 
@@ -204,7 +257,7 @@ Press **`Z`** in the TUI to cycle between tools without restarting.
 
 ## ✨ Features
 
-- **Parallel pings** — all 160 models tested simultaneously via native `fetch`
+- **Parallel pings** — all 174 models tested simultaneously via native `fetch`
 - **Adaptive monitoring** — 2s burst for 60s → 10s normal → 30s idle
 - **Stability score** — composite 0–100 (p95 latency, jitter, spike rate, uptime)
 - **Smart ranking** — top 3 highlighted 🥇🥈🥉
@@ -215,6 +268,8 @@ Press **`Z`** in the TUI to cycle between tools without restarting.
 - **⚡️ Command Palette** — `Ctrl+P` opens a searchable action launcher for filters, sorting, overlays, and quick toggles
 - **Install Endpoints** — push a full provider catalog into any tool's config (from Settings `P` or ⚡️ Command Palette)
 - **Missing tool bootstrap** — detect absent CLIs, offer one-click install, then continue the selected launch automatically
+- **Tool compatibility matrix** — colored initials show which tools each model supports; incompatible rows highlighted in dark red when a tool mode is active
+- **OpenCode Zen models** — 8 free models exclusive to OpenCode CLI/Desktop, powered by the Zen AI gateway
 - **Width guardrail** — shows a warning instead of a broken table in narrow terminals
 - **Readable everywhere** — semantic theme palette keeps table rows, overlays, badges, and help screens legible in dark and light terminals
 - **Global theme switch** — `G` cycles `auto`, `dark`, and `light` live without restarting

@@ -36,6 +36,7 @@
  *   - chalk: Terminal colors and formatting
  *   - ../src/constants.js: OVERLAY_PANEL_WIDTH, TABLE_FIXED_LINES
  *   - ../src/utils.js: sortResults
+ *   - ../src/tool-metadata.js: isModelCompatibleWithTool (for compatible-first partition)
  *
  *   ⚙️ Configuration:
  *   - OVERLAY_PANEL_WIDTH: Fixed width for overlay panels (from constants.js)
@@ -184,7 +185,6 @@ export function sortResultsWithPinnedFavorites(results, sortColumn, sortDirectio
     )
     return [...recommendedRows, ...nonRecommendedRows]
   }
-
   const recommendedRows = results
     .filter((r) => r.isRecommended && !r.isFavorite)
     .sort((a, b) => (b.recommendScore || 0) - (a.recommendScore || 0))

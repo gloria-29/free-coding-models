@@ -28,6 +28,7 @@
  */
 
 import { loadChangelog } from './changelog-loader.js'
+import { getToolMeta, isModelCompatibleWithTool, getCompatibleTools, findSimilarCompatibleModels } from './tool-metadata.js'
 import { loadConfig, replaceConfigContents } from './config.js'
 import { cleanupLegacyProxyArtifacts } from './legacy-proxy-cleanup.js'
 import { cycleThemeSetting, detectActiveTheme } from './theme.js'
@@ -247,14 +248,101 @@ export function createKeyHandler(ctx) {
     }
     console.log()
 
-    // 📖 OpenClaw manages API keys inside its own config file. All other tools
-    // 📖 still need a provider key to be useful, so keep the existing warning.
-    if (state.mode !== 'openclaw') {
+    // 📖 CLI-only tool compatibility checks:
+    // 📖 Case A: Active tool mode is CLI-only (rovo/gemini) but selected model doesn't belong to it
+    // 📖 Case B: Selected model belongs to a CLI-only provider but active mode is something else
+    // 📖 Case C: Selected model is from opencode-zen but active mode is not opencode/opencode-desktop
+    const activeMeta = getToolMeta(state.mode)
+    const isActiveModeCliOnly = activeMeta.cliOnly === true
+    const isModelFromCliOnly = selected.providerKey === 'rovo' || selected.providerKey === 'gemini'
+    const isModelFromZen = selected.providerKey === 'opencode-zen'
+    const modelBelongsToActiveMode = selected.providerKey === state.mode
+
+    // 📖 Case A: User is in Rovo/Gemini mode but selected a model from a different provider
+    if (isActiveModeCliOnly && !modelBelongsToActiveMode) {
+      const availableModels = MODELS.filter(m => m[5] === state.mode)
+      console.log(chalk.yellow(`  ⚠ ${activeMeta.label} can only launch its own models.`))
+      console.log(chalk.yellow(`  "${selected.label}" is not a ${activeMeta.label} model.`))
+      console.log()
+      if (availableModels.length > 0) {
+        console.log(chalk.cyan(`  Available ${activeMeta.label} models:`))
+        for (const m of availableModels) {
+          console.log(chalk.white(`    • ${m[1]} (${m[2]} tier, ${m[3]} SWE, ${m[4]} ctx)`))
+        }
+        console.log()
+      }
+      console.log(chalk.dim(`  Switch to another tool mode with Z, or select a ${activeMeta.label} model.`))
+      console.log()
+      process.exit(0)
+    }
+
+    // 📖 Case B: Selected model is from a CLI-only provider but active mode is different
+    if (isModelFromCliOnly && !modelBelongsToActiveMode) {
+      const modelMeta = getToolMeta(selected.providerKey)
+      console.log(chalk.yellow(`  ⚠ ${selected.label} is a ${modelMeta.label}-exclusive model.`))
+      console.log(chalk.yellow(`  Your current tool is: ${activeMeta.label}`))
+      console.log()
+      console.log(chalk.cyan(`  Switching to ${modelMeta.label} and launching...`))
+      setToolMode(selected.providerKey)
+      console.log(chalk.green(`  ✓ Switched to ${modelMeta.label}`))
+      console.log()
+    }
+
+    // 📖 Case C: Zen model selected but active mode is not OpenCode CLI / OpenCode Desktop
+    // 📖 Auto-switch to OpenCode CLI since Zen models only run on OpenCode
+    if (isModelFromZen && state.mode !== 'opencode' && state.mode !== 'opencode-desktop') {
+      console.log(chalk.yellow(`  ⚠ ${selected.label} is an OpenCode Zen model.`))
+      console.log(chalk.yellow(`  Zen models only run on OpenCode CLI or OpenCode Desktop.`))
+      console.log(chalk.yellow(`  Your current tool is: ${activeMeta.label}`))
+      console.log()
+      console.log(chalk.cyan(`  Switching to OpenCode CLI and launching...`))
+      setToolMode('opencode')
+      console.log(chalk.green(`  ✓ Switched to OpenCode CLI`))
+      console.log()
+    }
+
+    // 📖 OpenClaw, CLI-only tools, and Zen models manage auth differently — skip API key warning for them.
+    if (state.mode !== 'openclaw' && !isModelFromCliOnly && !isModelFromZen) {
       const selectedApiKey = getApiKey(state.config, selected.providerKey)
       if (!selectedApiKey) {
         console.log(chalk.yellow(`  Warning: No API key configured for ${selected.providerKey}.`))
         console.log(chalk.yellow(`  The selected tool may not be able to use ${selected.label}.`))
         console.log(chalk.dim(`  Set ${ENV_VAR_NAMES[selected.providerKey] || selected.providerKey.toUpperCase() + '_API_KEY'} or configure via settings (P key).`))
+        console.log()
+      }
+    }
+
+    // 📖 CLI-only tool auto-install check — verify the CLI binary is available before launch.
+    const toolModeForProvider = selected.providerKey
+    if (isModelFromCliOnly && !isToolInstalled(toolModeForProvider)) {
+      const installPlan = getToolInstallPlan(toolModeForProvider)
+      if (installPlan.supported) {
+        console.log()
+        console.log(chalk.yellow(`  ⚠ ${getToolMeta(toolModeForProvider).label} is not installed.`))
+        console.log(chalk.dim(`  ${installPlan.summary}`))
+        if (installPlan.note) console.log(chalk.dim(`  Note: ${installPlan.note}`))
+        console.log()
+        console.log(chalk.cyan(`  📦 Auto-installing ${getToolMeta(toolModeForProvider).label}...`))
+        console.log()
+
+        const installResult = await installToolWithPlan(installPlan)
+        if (!installResult.ok) {
+          console.log(chalk.red(`  X Tool installation failed with exit code ${installResult.exitCode}.`))
+          if (installPlan.docsUrl) console.log(chalk.dim(`  Docs: ${installPlan.docsUrl}`))
+          console.log()
+          process.exit(installResult.exitCode || 1)
+        }
+
+        // 📖 Verify tool is now installed
+        if (!isToolInstalled(toolModeForProvider)) {
+          console.log(chalk.yellow('  ⚠ The installer finished, but the tool is still not reachable from this terminal session.'))
+          console.log(chalk.dim('  Restart your shell or add the tool bin directory to PATH, then retry the launch.'))
+          if (installPlan.docsUrl) console.log(chalk.dim(`  Docs: ${installPlan.docsUrl}`))
+          console.log()
+          process.exit(1)
+        }
+
+        console.log(chalk.green('  ✓ Tool installed successfully. Continuing with the selected model...'))
         console.log()
       }
     }
@@ -1200,6 +1288,85 @@ export function createKeyHandler(ctx) {
       return
     }
 
+    // 📖 Incompatible fallback overlay: ↑↓ navigate across tool + model sections, Enter confirms, Esc cancels.
+    // 📖 Cursor is a flat index: 0..N-1 = compatible tools, N..N+M-1 = similar models.
+    if (state.incompatibleFallbackOpen) {
+      if (key.ctrl && key.name === 'c') { exit(0); return }
+
+      const tools = state.incompatibleFallbackTools || []
+      const similarModels = state.incompatibleFallbackSimilarModels || []
+      const totalItems = tools.length + similarModels.length
+
+      if (key.name === 'escape') {
+        // 📖 Close the overlay and go back to the main table
+        state.incompatibleFallbackOpen = false
+        state.incompatibleFallbackCursor = 0
+        state.incompatibleFallbackScrollOffset = 0
+        state.incompatibleFallbackModel = null
+        state.incompatibleFallbackTools = []
+        state.incompatibleFallbackSimilarModels = []
+        state.incompatibleFallbackSection = 'tools'
+        return
+      }
+
+      if (key.name === 'up' && totalItems > 0) {
+        state.incompatibleFallbackCursor = state.incompatibleFallbackCursor > 0
+          ? state.incompatibleFallbackCursor - 1
+          : totalItems - 1
+        state.incompatibleFallbackSection = state.incompatibleFallbackCursor < tools.length ? 'tools' : 'models'
+        return
+      }
+
+      if (key.name === 'down' && totalItems > 0) {
+        state.incompatibleFallbackCursor = state.incompatibleFallbackCursor < totalItems - 1
+          ? state.incompatibleFallbackCursor + 1
+          : 0
+        state.incompatibleFallbackSection = state.incompatibleFallbackCursor < tools.length ? 'tools' : 'models'
+        return
+      }
+
+      if (key.name === 'return' && totalItems > 0) {
+        const cursor = state.incompatibleFallbackCursor
+        const fallbackModel = state.incompatibleFallbackModel
+
+        // 📖 Close overlay state first
+        state.incompatibleFallbackOpen = false
+        state.incompatibleFallbackCursor = 0
+        state.incompatibleFallbackScrollOffset = 0
+        state.incompatibleFallbackModel = null
+        state.incompatibleFallbackTools = []
+        state.incompatibleFallbackSimilarModels = []
+        state.incompatibleFallbackSection = 'tools'
+
+        if (cursor < tools.length) {
+          // 📖 Section 1: Switch to the selected compatible tool, then launch the original model
+          const selectedToolKey = tools[cursor]
+          setToolMode(selectedToolKey)
+          // 📖 Find the full result object for the original model to pass to launchSelectedModel
+          const fullModel = state.results.find(
+            r => r.providerKey === fallbackModel.providerKey && r.modelId === fallbackModel.modelId
+          )
+          if (fullModel) {
+            await launchSelectedModel(fullModel)
+          }
+        } else {
+          // 📖 Section 2: Launch the selected similar model instead
+          const modelIdx = cursor - tools.length
+          const selectedSimilar = similarModels[modelIdx]
+          if (selectedSimilar) {
+            const fullModel = state.results.find(
+              r => r.providerKey === selectedSimilar.providerKey && r.modelId === selectedSimilar.modelId
+            )
+            if (fullModel) {
+              await launchSelectedModel(fullModel)
+            }
+          }
+        }
+      }
+
+      return
+    }
+
     // 📖 Feedback overlay: intercept ALL keys while overlay is active.
     // 📖 Enter → send to Discord, Esc → cancel, Backspace → delete char, printable → append to buffer.
     if (state.feedbackOpen) {
@@ -1809,8 +1976,6 @@ export function createKeyHandler(ctx) {
 
     // 📖 Profile system removed - API keys now persist permanently across all sessions
 
-    // 📖 Profile system removed - API keys now persist permanently across all sessions
-
     // 📖 Shift+R: reset all UI view settings to defaults (tier, sort, provider) and clear persisted config
     if (key.name === 'r' && key.shift) {
       resetViewSettings()
@@ -1944,6 +2109,33 @@ export function createKeyHandler(ctx) {
       // 📖 Use the cached visible+sorted array — guaranteed to match what's on screen
       const selected = state.visibleSorted[state.cursor]
       if (!selected) return // 📖 Guard: empty visible list (all filtered out)
+
+      // 📖 Incompatibility intercept — if the model can't run on the active tool,
+      // 📖 show the fallback overlay instead of launching. Lets user switch tool or pick similar model.
+      if (!isModelCompatibleWithTool(selected.providerKey, state.mode)) {
+        const compatTools = getCompatibleTools(selected.providerKey)
+        const similarModels = findSimilarCompatibleModels(
+          selected.sweScore || '-',
+          state.mode,
+          state.results.filter(r => r.providerKey !== selected.providerKey || r.modelId !== selected.modelId),
+          3
+        )
+        state.incompatibleFallbackOpen = true
+        state.incompatibleFallbackCursor = 0
+        state.incompatibleFallbackScrollOffset = 0
+        state.incompatibleFallbackModel = {
+          modelId: selected.modelId,
+          label: selected.label,
+          tier: selected.tier,
+          providerKey: selected.providerKey,
+          sweScore: selected.sweScore || '-',
+        }
+        state.incompatibleFallbackTools = compatTools
+        state.incompatibleFallbackSimilarModels = similarModels
+        state.incompatibleFallbackSection = 'tools'
+        return
+      }
+
       if (shouldCheckMissingTool(state.mode) && !isToolInstalled(state.mode)) {
         state.toolInstallPromptOpen = true
         state.toolInstallPromptCursor = 0

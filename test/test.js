@@ -54,6 +54,8 @@ import {
   resolveLauncherModelId,
 } from '../src/tool-launchers.js'
 import { getToolInstallPlan, isToolInstalled, resolveToolBinaryPath } from '../src/tool-bootstrap.js'
+import { TOOL_METADATA, TOOL_MODE_ORDER, getCompatibleTools, isModelCompatibleWithTool } from '../src/tool-metadata.js'
+import { sortResultsWithPinnedFavorites } from '../src/render-helpers.js'
 import { startOpenClaw } from '../src/openclaw.js'
 import { getConfiguredInstallableProviders, getInstallTargetModes, installProviderEndpoints } from '../src/endpoint-installer.js'
 import { cleanupLegacyProxyArtifacts } from '../src/legacy-proxy-cleanup.js'
@@ -2124,6 +2126,73 @@ describe('tool bootstrap helpers', () => {
   })
 })
 
+describe('tool compatibility matrix', () => {
+  it('regular providers are compatible with all non-cliOnly tools', () => {
+    const regularTools = getCompatibleTools('nvidia')
+    assert.ok(regularTools.includes('opencode'))
+    assert.ok(regularTools.includes('opencode-desktop'))
+    assert.ok(regularTools.includes('openclaw'))
+    assert.ok(regularTools.includes('goose'))
+    assert.ok(regularTools.includes('amp'))
+    assert.ok(!regularTools.includes('rovo'), 'regular models should NOT be compatible with rovo')
+    assert.ok(!regularTools.includes('gemini'), 'regular models should NOT be compatible with gemini')
+  })
+
+  it('rovo models are only compatible with rovo', () => {
+    const tools = getCompatibleTools('rovo')
+    assert.deepEqual(tools, ['rovo'])
+  })
+
+  it('gemini models are only compatible with gemini', () => {
+    const tools = getCompatibleTools('gemini')
+    assert.deepEqual(tools, ['gemini'])
+  })
+
+  it('opencode-zen models are only compatible with opencode and opencode-desktop', () => {
+    const tools = getCompatibleTools('opencode-zen')
+    assert.deepEqual(tools, ['opencode', 'opencode-desktop'])
+  })
+
+  it('isModelCompatibleWithTool returns true for matching pairs', () => {
+    assert.ok(isModelCompatibleWithTool('nvidia', 'opencode'))
+    assert.ok(isModelCompatibleWithTool('rovo', 'rovo'))
+    assert.ok(isModelCompatibleWithTool('gemini', 'gemini'))
+    assert.ok(isModelCompatibleWithTool('opencode-zen', 'opencode'))
+    assert.ok(isModelCompatibleWithTool('opencode-zen', 'opencode-desktop'))
+  })
+
+  it('isModelCompatibleWithTool returns false for incompatible pairs', () => {
+    assert.ok(!isModelCompatibleWithTool('rovo', 'opencode'))
+    assert.ok(!isModelCompatibleWithTool('gemini', 'openclaw'))
+    assert.ok(!isModelCompatibleWithTool('opencode-zen', 'goose'))
+    assert.ok(!isModelCompatibleWithTool('opencode-zen', 'rovo'))
+    assert.ok(!isModelCompatibleWithTool('nvidia', 'rovo'))
+  })
+
+  it('every tool in TOOL_MODE_ORDER has an emoji and color', () => {
+    for (const toolKey of TOOL_MODE_ORDER) {
+      const meta = TOOL_METADATA[toolKey]
+      assert.ok(meta, `missing TOOL_METADATA for ${toolKey}`)
+      assert.ok(typeof meta.emoji === 'string' && meta.emoji.length >= 1, `${toolKey} needs an emoji`)
+      assert.ok(Array.isArray(meta.color) && meta.color.length === 3, `${toolKey} needs a [r,g,b] color`)
+    }
+  })
+
+  it('all tool emojis are unique (except OpenCode CLI/Desktop sharing 📦)', () => {
+    // 📖 OpenCode CLI and Desktop intentionally share 📦 — they are the same platform
+    const emojis = TOOL_MODE_ORDER.map(k => TOOL_METADATA[k].emoji)
+    const nonShared = emojis.filter(e => e !== '📦')
+    const unique = new Set(nonShared)
+    assert.equal(unique.size, nonShared.length, `duplicate emojis found (excluding 📦): ${nonShared.join(',')}`)
+  })
+
+  it('sources.js opencode-zen has zenOnly flag', () => {
+    assert.ok(sources['opencode-zen'], 'opencode-zen source must exist')
+    assert.ok(sources['opencode-zen'].zenOnly, 'opencode-zen must have zenOnly: true')
+    assert.ok(sources['opencode-zen'].models.length > 0, 'opencode-zen must have models')
+  })
+})
+
 describe('tool launch preparation', () => {
   function createToolPaths(dir) {
     return {
@@ -2662,5 +2731,51 @@ describe('Custom text filter matching logic', () => {
     const result = tierSPlusRows.filter(r => matchesTextFilter(r, 'sonnet', mockSources))
     assert.equal(result.length, 1)
     assert.equal(result[0].label, 'Claude 4 Sonnet')
+  })
+})
+
+// ─── sortResultsWithPinnedFavorites (no toolMode partition) ───────────────────
+// 📖 Sorting no longer partitions by tool compatibility — incompatible models stay
+// 📖 in their natural sorted position and are highlighted with a red background instead.
+
+describe('sortResultsWithPinnedFavorites normal sort order', () => {
+  const mockModels = [
+    { id: 'nvidia-1', providerKey: 'nvidia', label: 'Llama 3.1', idx: 1, tier: 'A', pings: [], isRecommended: false, isFavorite: false },
+    { id: 'rovo-1', providerKey: 'rovo', label: 'Claude Sonnet 4', idx: 2, tier: 'S+', pings: [], isRecommended: false, isFavorite: false },
+    { id: 'openrouter-1', providerKey: 'openrouter', label: 'GPT-4o', idx: 3, tier: 'S', pings: [], isRecommended: false, isFavorite: false },
+    { id: 'gemini-1', providerKey: 'gemini', label: 'Gemini 2.5 Pro', idx: 4, tier: 'S+', pings: [], isRecommended: false, isFavorite: false },
+    { id: 'zen-1', providerKey: 'opencode-zen', label: 'Big Pickle', idx: 5, tier: 'A', pings: [], isRecommended: false, isFavorite: false },
+    { id: 'groq-1', providerKey: 'groq', label: 'Llama 3.3 70B', idx: 6, tier: 'A+', pings: [], isRecommended: false, isFavorite: false },
+  ]
+
+  it('returns normal rank sort order — no partitioning by tool compatibility', () => {
+    const sorted = sortResultsWithPinnedFavorites(mockModels, 'rank', 'asc', { pinFavorites: false })
+    // 📖 All models in rank ascending order: idx 1,2,3,4,5,6 — rovo/gemini/zen NOT pushed to bottom
+    assert.equal(sorted[0].id, 'nvidia-1')
+    assert.equal(sorted[1].id, 'rovo-1')
+    assert.equal(sorted[2].id, 'openrouter-1')
+    assert.equal(sorted[3].id, 'gemini-1')
+    assert.equal(sorted[4].id, 'zen-1')
+    assert.equal(sorted[5].id, 'groq-1')
+  })
+
+  it('recommended models still pinned above others', () => {
+    const models = [
+      { id: 'regular-1', providerKey: 'nvidia', label: 'Llama', idx: 1, tier: 'A', pings: [], isRecommended: false, isFavorite: false },
+      { id: 'rovo-1', providerKey: 'rovo', label: 'Claude Sonnet 4', idx: 2, tier: 'S+', pings: [], isRecommended: true, recommendScore: 90, isFavorite: false },
+    ]
+    const sorted = sortResultsWithPinnedFavorites(models, 'rank', 'asc', { pinFavorites: false })
+    assert.equal(sorted[0].id, 'rovo-1')
+    assert.equal(sorted[1].id, 'regular-1')
+  })
+
+  it('favorites pinned above non-favorites when pinFavorites=true', () => {
+    const models = [
+      { id: 'regular-1', providerKey: 'nvidia', label: 'Llama', idx: 1, tier: 'A', pings: [], isRecommended: false, isFavorite: false },
+      { id: 'rovo-fav', providerKey: 'rovo', label: 'Claude Fav', idx: 3, tier: 'S', pings: [], isRecommended: false, isFavorite: true, favoriteRank: 0 },
+    ]
+    const sorted = sortResultsWithPinnedFavorites(models, 'rank', 'asc', { pinFavorites: true })
+    assert.equal(sorted[0].id, 'rovo-fav')
+    assert.equal(sorted[1].id, 'regular-1')
   })
 })

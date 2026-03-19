@@ -58,6 +58,7 @@ export const ENV_VAR_NAMES = {
   cloudflare: 'CLOUDFLARE_API_TOKEN',
   perplexity: 'PERPLEXITY_API_KEY',
   zai:        'ZAI_API_KEY',
+  gemini:     'GEMINI_API_KEY',
 }
 
 // 📖 OPENCODE_MODEL_MAP: sparse table of model IDs that differ between sources.js and OpenCode's
@@ -224,5 +225,29 @@ export const PROVIDER_METADATA = {
     signupUrl: 'https://pi.dev',
     signupHint: 'Install @mariozechner/pi-coding-agent and set ANTHROPIC_API_KEY',
     rateLimits: 'Depends on provider subscription (e.g., Anthropic, OpenAI)',
+  },
+  rovo: {
+    label: 'Rovo Dev CLI',
+    color: chalk.rgb(148, 163, 184), // slate blue
+    signupUrl: 'https://www.atlassian.com/rovo',
+    signupHint: 'Install ACLI and run: acli rovodev auth login',
+    rateLimits: 'Free tier: 5M tokens/day (beta, requires Atlassian account)',
+    cliOnly: true,
+  },
+  gemini: {
+    label: 'Gemini CLI',
+    color: chalk.rgb(66, 165, 245), // blue
+    signupUrl: 'https://github.com/google-gemini/gemini-cli',
+    signupHint: 'Install: npm install -g @google/gemini-cli',
+    rateLimits: 'Free tier: 1,000 req/day (personal Google account, no credit card)',
+    cliOnly: true,
+  },
+  'opencode-zen': {
+    label: 'OpenCode Zen',
+    color: chalk.rgb(139, 92, 246), // violet — distinctive from other providers
+    signupUrl: 'https://opencode.ai/auth',
+    signupHint: 'Login at opencode.ai/auth to get your Zen API key',
+    rateLimits: 'Free tier models — requires OpenCode Zen API key',
+    zenOnly: true,
   },
 }

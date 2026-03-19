@@ -19,20 +19,43 @@
  *   → `getToolMeta` — return display metadata for one mode
  *   → `getToolModeOrder` — stable mode cycle order for the `Z` hotkey
  *
- * @exports TOOL_METADATA, TOOL_MODE_ORDER, getToolMeta, getToolModeOrder
+ * @exports TOOL_METADATA, TOOL_MODE_ORDER, COMPAT_COLUMN_SLOTS, getToolMeta, getToolModeOrder
  */
+// 📖 Each tool has a unique `color` RGB tuple used for the "Compatible with" column
+// 📖 and for coloring the tool name in the Z cycle header badge.
+// 📖 `emoji` is the unique icon shown everywhere (header badge, compat column, palette, overlays).
+// 📖 OpenCode CLI and Desktop share 📦 — they are the same platform, split only for launch logic.
 export const TOOL_METADATA = {
-  opencode: { label: 'OpenCode CLI', emoji: '💻', flag: '--opencode' },
-  'opencode-desktop': { label: 'OpenCode Desktop', emoji: '🖥', flag: '--opencode-desktop' },
-  openclaw: { label: 'OpenClaw', emoji: '🦞', flag: '--openclaw' },
-  crush: { label: 'Crush', emoji: '💘', flag: '--crush' },
-  goose: { label: 'Goose', emoji: '🪿', flag: '--goose' },
-  pi: { label: 'Pi', emoji: 'π', flag: '--pi' },
-  aider: { label: 'Aider', emoji: '🛠', flag: '--aider' },
-  qwen: { label: 'Qwen Code', emoji: '🌊', flag: '--qwen' },
-  openhands: { label: 'OpenHands', emoji: '🤲', flag: '--openhands' },
-  amp: { label: 'Amp', emoji: '⚡', flag: '--amp' },
+  opencode:          { label: 'OpenCode CLI',     emoji: '📦', flag: '--opencode',         color: [110, 214, 255] },
+  'opencode-desktop': { label: 'OpenCode Desktop', emoji: '📦', flag: '--opencode-desktop', color: [149, 205, 255] },
+  openclaw:          { label: 'OpenClaw',          emoji: '🦞', flag: '--openclaw',         color: [255, 129, 129] },
+  crush:             { label: 'Crush',             emoji: '💘', flag: '--crush',            color: [255, 168, 209] },
+  goose:             { label: 'Goose',             emoji: '🪿', flag: '--goose',            color: [132, 235, 168] },
+  pi:                { label: 'Pi',                emoji: 'π',  flag: '--pi',               color: [173, 216, 230] },
+  aider:             { label: 'Aider',             emoji: '🛠', flag: '--aider',            color: [255, 208, 102] },
+  qwen:              { label: 'Qwen Code',         emoji: '🐉', flag: '--qwen',             color: [255, 213, 128] },
+  openhands:         { label: 'OpenHands',         emoji: '🤲', flag: '--openhands',        color: [228, 191, 239] },
+  amp:               { label: 'Amp',               emoji: '⚡', flag: '--amp',              color: [255, 232, 98] },
+  rovo:              { label: 'Rovo Dev CLI',      emoji: '🦘', flag: '--rovo',             color: [148, 163, 184], cliOnly: true },
+  gemini:            { label: 'Gemini CLI',        emoji: '♊', flag: '--gemini',           color: [66, 165, 245],  cliOnly: true },
 }
+
+// 📖 Deduplicated emoji order for the "Compatible with" column.
+// 📖 OpenCode CLI + Desktop are merged into a single 📦 slot since they share compatibility.
+// 📖 Each slot maps to one or more toolKeys for compatibility checking.
+export const COMPAT_COLUMN_SLOTS = [
+  { emoji: '📦', toolKeys: ['opencode', 'opencode-desktop'], color: [110, 214, 255] },
+  { emoji: '🦞', toolKeys: ['openclaw'],                     color: [255, 129, 129] },
+  { emoji: '💘', toolKeys: ['crush'],                        color: [255, 168, 209] },
+  { emoji: '🪿', toolKeys: ['goose'],                        color: [132, 235, 168] },
+  { emoji: 'π',  toolKeys: ['pi'],                           color: [173, 216, 230] },
+  { emoji: '🛠', toolKeys: ['aider'],                        color: [255, 208, 102] },
+  { emoji: '🐉', toolKeys: ['qwen'],                         color: [255, 213, 128] },
+  { emoji: '🤲', toolKeys: ['openhands'],                    color: [228, 191, 239] },
+  { emoji: '⚡', toolKeys: ['amp'],                          color: [255, 232, 98] },
+  { emoji: '🦘', toolKeys: ['rovo'],                         color: [148, 163, 184] },
+  { emoji: '♊', toolKeys: ['gemini'],                       color: [66, 165, 245] },
+]
 
 export const TOOL_MODE_ORDER = [
   'opencode',
@@ -45,6 +68,8 @@ export const TOOL_MODE_ORDER = [
   'qwen',
   'openhands',
   'amp',
+  'rovo',
+  'gemini',
 ]
 
 export function getToolMeta(mode) {
@@ -53,4 +78,62 @@ export function getToolMeta(mode) {
 
 export function getToolModeOrder() {
   return [...TOOL_MODE_ORDER]
+}
+
+// 📖 Regular tools: all tools EXCEPT rovo, gemini (which are CLI-only exclusives).
+// 📖 Used as the default compatible set for normal provider models.
+const REGULAR_TOOLS = Object.keys(TOOL_METADATA).filter(k => !TOOL_METADATA[k].cliOnly)
+
+// 📖 Zen-only tools: OpenCode Zen models can ONLY run on OpenCode CLI / OpenCode Desktop.
+const ZEN_COMPATIBLE_TOOLS = ['opencode', 'opencode-desktop']
+
+/**
+ * 📖 Returns the list of tool keys a model is compatible with.
+ *   - Rovo models → only 'rovo'
+ *   - Gemini models → only 'gemini'
+ *   - OpenCode Zen models → only 'opencode', 'opencode-desktop'
+ *   - Regular models → all non-cliOnly tools
+ * @param {string} providerKey — the source key from sources.js (e.g. 'nvidia', 'rovo', 'opencode-zen')
+ * @returns {string[]} — array of compatible tool keys
+ */
+export function getCompatibleTools(providerKey) {
+  if (providerKey === 'rovo') return ['rovo']
+  if (providerKey === 'gemini') return ['gemini']
+  if (providerKey === 'opencode-zen') return ZEN_COMPATIBLE_TOOLS
+  return REGULAR_TOOLS
+}
+
+/**
+ * 📖 Checks whether a model from the given provider can run on the specified tool mode.
+ * @param {string} providerKey — source key
+ * @param {string} toolMode — active tool mode
+ * @returns {boolean}
+ */
+export function isModelCompatibleWithTool(providerKey, toolMode) {
+  return getCompatibleTools(providerKey).includes(toolMode)
+}
+
+/**
+ * 📖 Finds compatible models with a similar SWE score to the selected one.
+ * 📖 Used by the incompatibility fallback overlay to suggest alternatives.
+ * @param {string} selectedSwe — SWE score string like '72.0%' or '-'
+ * @param {string} toolMode — current active tool mode
+ * @param {Array} allResults — the state.results array (each has .providerKey, .modelId, .label, .tier, .sweScore)
+ * @param {number} [maxResults=3] — max suggestions to return
+ * @returns {{ modelId: string, label: string, tier: string, sweScore: string, providerKey: string, sweDelta: number }[]}
+ */
+export function findSimilarCompatibleModels(selectedSwe, toolMode, allResults, maxResults = 3) {
+  const targetSwe = parseFloat(selectedSwe) || 0
+  return allResults
+    .filter(r => !r.hidden && isModelCompatibleWithTool(r.providerKey, toolMode))
+    .map(r => ({
+      modelId: r.modelId,
+      label: r.label,
+      tier: r.tier,
+      sweScore: r.sweScore || '-',
+      providerKey: r.providerKey,
+      sweDelta: Math.abs((parseFloat(r.sweScore) || 0) - targetSwe),
+    }))
+    .sort((a, b) => a.sweDelta - b.sweDelta)
+    .slice(0, maxResults)
 }

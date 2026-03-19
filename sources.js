@@ -344,6 +344,40 @@ export const iflow = [
   ['qwen3-max',                               'Qwen3 Max',           'A+', '55.0%', '256k'],
 ]
 
+// 📖 Rovo Dev CLI source - https://www.atlassian.com/rovo
+// 📖 CLI tool only - no API endpoint - requires 'acli rovodev run'
+// 📖 Install: https://support.atlassian.com/rovo/docs/install-and-run-rovo-dev-cli-on-your-device/
+// 📖 Free tier: 5M tokens/day (beta) - Claude Sonnet 4 (72.7% SWE-bench)
+// 📖 Requires Atlassian account + Rovo Dev activated on your site
+export const rovo = [
+  ['anthropic/claude-sonnet-4',         'Claude Sonnet 4 🆕',   'S+', '72.7%', '200k'],
+]
+
+// 📖 Gemini CLI source - https://github.com/google-gemini/gemini-cli
+// 📖 CLI tool with OpenAI-compatible API support
+// 📖 Install: npm install -g @google/gemini-cli
+// 📖 Free tier: 1,000 req/day with personal Google account (no credit card)
+// 📖 Models: Gemini 3 Pro (76.2% SWE-bench), Gemini 2.5 Pro, Gemini 2.5 Flash
+// 📖 Supports custom OpenAI-compatible providers via GEMINI_API_BASE_URL
+export const gemini = [
+  ['google/gemini-3-pro',               'Gemini 3 Pro 🆕',      'S+', '76.2%', '1M'],
+  ['google/gemini-2.5-pro',             'Gemini 2.5 Pro',      'S+', '63.2%', '1M'],
+  ['google/gemini-2.5-flash',           'Gemini 2.5 Flash',    'A+', '50.0%', '1M'],
+]
+
+// 📖 OpenCode Zen free models — hosted AI gateway accessed through OpenCode CLI/Desktop
+// 📖 Endpoint: https://opencode.ai/zen/v1/... — requires OpenCode Zen API key
+// 📖 These models are FREE on the Zen platform and only run on OpenCode CLI or OpenCode Desktop
+// 📖 Login: https://opencode.ai/auth — get your Zen API key
+// 📖 Config: set provider to opencode/<model-id> in OpenCode config
+export const opencodeZen = [
+  ['big-pickle',                              'Big Pickle 🆕',             'S+', '72.0%', '200k'],
+  ['gpt-5-nano',                              'GPT 5 Nano 🆕',            'S',  '65.0%', '128k'],
+  ['mimo-v2-flash-free',                      'MiMo V2 Flash Free 🆕',    'S+', '73.4%', '256k'],
+  ['minimax-m2.5-free',                       'MiniMax M2.5 Free 🆕',     'S+', '80.2%', '200k'],
+  ['nemotron-3-super-free',                   'Nemotron 3 Super Free 🆕',  'A+', '52.0%', '128k'],
+]
+
 // 📖 All sources combined - used by the main script
 // 📖 Each source has: name (display), url (API endpoint), models (array of model tuples)
 export const sources = {
@@ -446,6 +480,32 @@ export const sources = {
     name: 'iFlow',
     url: 'https://apis.iflow.cn/v1/chat/completions',
     models: iflow,
+  },
+  // 📖 CLI-only tools (no API endpoint - launched directly)
+  rovo: {
+    name: 'Rovo Dev CLI',
+    url: null, // CLI tool - no API endpoint
+    models: rovo,
+    cliOnly: true,
+    installUrl: 'https://support.atlassian.com/rovo/docs/install-and-run-rovo-dev-cli-on-your-device/',
+    binary: 'acli',
+    checkArgs: ['rovodev', '--help'],
+  },
+  gemini: {
+    name: 'Gemini CLI',
+    url: null, // CLI tool - no API endpoint (can use OpenAI-compatible via env)
+    models: gemini,
+    cliOnly: true,
+    installUrl: 'https://github.com/google-gemini/gemini-cli',
+    binary: 'gemini',
+    checkArgs: ['--version'],
+  },
+  // 📖 OpenCode Zen free models — hosted AI gateway, only runs on OpenCode CLI / Desktop
+  'opencode-zen': {
+    name: 'OpenCode Zen',
+    url: 'https://opencode.ai/zen/v1/chat/completions',
+    models: opencodeZen,
+    zenOnly: true,
   },
 }
 

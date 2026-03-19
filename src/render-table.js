@@ -50,7 +50,7 @@ import { TIER_COLOR } from './tier-colors.js'
 import { getAvg, getVerdict, getUptime, getStabilityScore, getVersionStatusInfo } from './utils.js'
 import { usagePlaceholderForProvider } from './ping.js'
 import { calculateViewport, sortResultsWithPinnedFavorites, padEndDisplay, displayWidth } from './render-helpers.js'
-import { getToolMeta } from './tool-metadata.js'
+import { getToolMeta, TOOL_METADATA, TOOL_MODE_ORDER, COMPAT_COLUMN_SLOTS, getCompatibleTools, isModelCompatibleWithTool } from './tool-metadata.js'
 import { getColumnSpacing } from './ui-config.js'
 
 const require = createRequire(import.meta.url)
@@ -109,9 +109,12 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
 
   // 📖 Tool badge keeps the active launch target visible in the header, so the
   // 📖 footer no longer needs a redundant Enter action or mode toggle reminder.
+  // 📖 Tool name is colored with its unique tool color for quick recognition.
   const toolMeta = getToolMeta(mode)
   const toolBadgeColor = mode === 'openclaw' ? themeColors.warningBold : themeColors.accentBold
-  const modeBadge = toolBadgeColor(' [ ') + themeColors.hotkey('Z') + toolBadgeColor(` Tool : ${toolMeta.label} ]`)
+  const toolColor = toolMeta.color ? chalk.rgb(...toolMeta.color) : toolBadgeColor
+  const modeBadge = toolBadgeColor(' [ ') + themeColors.hotkey('Z') + toolBadgeColor(' Tool : ') + toolColor.bold(`${toolMeta.emoji} ${toolMeta.label}`) + toolBadgeColor(' ]')
+
   const activeHeaderBadge = (text, bg) => themeColors.badge(text, bg, getReadableTextRgb(bg))
   const versionStatus = getVersionStatusInfo(settingsUpdateState, settingsUpdateLatestVersion, startupLatestVersion, versionAlertsEnabled)
 
@@ -157,6 +160,7 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   const W_STATUS = 18
   const W_VERDICT = 14
   const W_UPTIME = 6
+  const W_COMPAT = 22 // 📖 "Compatible with" column — 11 emoji slots (10×2 + 1×1 for π + 1 padding)
   // const W_TOKENS = 7 // Used column removed
   // const W_USAGE = 7 // Usage column removed
   const MIN_TABLE_WIDTH = WIDTH_WARNING_MIN_COLS
@@ -176,6 +180,7 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   let showUptime = true
   let showTier = true
   let showStability = true
+  let showCompat = true // 📖 "Compatible with" column — hidden on narrow terminals
   let isCompact = false
 
   if (terminalCols > 0) {
@@ -187,6 +192,7 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
       cols.push(W_SWE, W_CTX, W_MODEL, wSource, wPing, wAvg, wStatus, W_VERDICT)
       if (showStability) cols.push(wStab)
       if (showUptime) cols.push(W_UPTIME)
+      if (showCompat) cols.push(W_COMPAT)
       return ROW_MARGIN + cols.reduce((a, b) => a + b, 0) + (cols.length - 1) * SEP_W
     }
 
@@ -200,6 +206,7 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
       wStatus = 13   // Health truncated after 6 chars + '…'
     }
     // 📖 Steps 2–5: Progressive column hiding (least useful first)
+    if (calcWidth() > terminalCols) showCompat = false
     if (calcWidth() > terminalCols) showRank = false
     if (calcWidth() > terminalCols) showUptime = false
     if (calcWidth() > terminalCols) showTier = false
@@ -208,7 +215,7 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   const warningDurationMs = 2_000
   const elapsed = widthWarningStartedAt ? Math.max(0, Date.now() - widthWarningStartedAt) : warningDurationMs
   const remainingMs = Math.max(0, warningDurationMs - elapsed)
-  const showWidthWarning = terminalCols > 0 && terminalCols < MIN_TABLE_WIDTH && !widthWarningDismissed && widthWarningShowCount < 2 && remainingMs > 0
+  const showWidthWarning = terminalCols > 0 && terminalCols < MIN_TABLE_WIDTH && !widthWarningDismissed && remainingMs > 0
 
   if (showWidthWarning) {
     const lines = []
@@ -319,6 +326,14 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     const padding = ' '.repeat(Math.max(0, W_UPTIME - plain.length))
     return themeColors.hotkey('U') + themeColors.dim('p%' + padding)
   })()
+  // 📖 "Compatible with" column header — show all tool emojis in their colors as the header
+  const compatHeaderEmojis = COMPAT_COLUMN_SLOTS.map(slot => {
+    return chalk.rgb(...slot.color)(slot.emoji)
+  }).join('')
+  // 📖 padEndDisplay accounts for emoji widths (most are 2-wide, π is 1-wide)
+  const compatHeaderRaw = COMPAT_COLUMN_SLOTS.reduce((w, slot) => w + displayWidth(slot.emoji), 0)
+  const compatHeaderPad = Math.max(0, W_COMPAT - compatHeaderRaw)
+  const compatH_c = compatHeaderEmojis + ' '.repeat(compatHeaderPad)
   // 📖 Usage column removed from UI – no header or separator for it.
   // 📖 Header row: conditionally include columns based on responsive visibility
   const headerParts = []
@@ -327,6 +342,7 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   headerParts.push(sweH_c, ctxH_c, modelH_c, originH_c, pingH_c, avgH_c, healthH_c, verdictH_c)
   if (showStability) headerParts.push(stabH_c)
   if (showUptime) headerParts.push(uptimeH_c)
+  if (showCompat) headerParts.push(compatH_c)
   lines.push('  ' + headerParts.join(COL_SEP))
 
 
@@ -585,6 +601,31 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     const sourceCursorText = providerDisplay.padEnd(wSource)
     const sourceCell = isCursor ? themeColors.provider(r.providerKey, sourceCursorText, { bold: true }) : source
 
+    // 📖 "Compatible with" column — show colored emojis for compatible tools
+    // 📖 Each slot in COMPAT_COLUMN_SLOTS maps to one or more tool keys.
+    // 📖 OpenCode CLI + Desktop are merged into a single 📦 slot.
+    let compatCell = ''
+    if (showCompat) {
+      const compatTools = getCompatibleTools(r.providerKey)
+      let compatDisplayWidth = 0
+      const emojiCells = COMPAT_COLUMN_SLOTS.map(slot => {
+        const isCompat = slot.toolKeys.some(tk => compatTools.includes(tk))
+        const ew = displayWidth(slot.emoji)
+        compatDisplayWidth += isCompat ? ew : ew
+        if (isCompat) {
+          return chalk.rgb(...slot.color)(slot.emoji)
+        }
+        // 📖 Replace incompatible emoji with dim spaces matching its display width
+        return themeColors.dim(' '.repeat(ew))
+      }).join('')
+      // 📖 Pad to W_COMPAT — account for actual emoji display widths
+      const extraPad = Math.max(0, W_COMPAT - compatDisplayWidth)
+      compatCell = emojiCells + ' '.repeat(extraPad)
+    }
+
+    // 📖 Check if this model is incompatible with the active tool mode
+    const isIncompatible = !isModelCompatibleWithTool(r.providerKey, mode)
+
     // 📖 Usage column removed from UI – no usage data displayed.
     // (We keep the logic but do not render it.)
     const usageCell = ''
@@ -596,10 +637,15 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     rowParts.push(sweCell, ctxCell, nameCell, sourceCell, pingCell, avgCell, status, speedCell)
     if (showStability) rowParts.push(stabCell)
     if (showUptime) rowParts.push(uptimeCell)
+    if (showCompat) rowParts.push(compatCell)
     const row = '  ' + rowParts.join(COL_SEP)
 
     if (isCursor) {
       lines.push(themeColors.bgModelCursor(row))
+    } else if (isIncompatible) {
+      // 📖 Dark red background for models incompatible with the active tool mode.
+      // 📖 This visually warns the user that selecting this model won't work with their current tool.
+      lines.push(chalk.bgRgb(60, 15, 15).rgb(180, 130, 130)(row))
     } else if (r.isRecommended) {
       // 📖 Medium green background for recommended models (distinguishable from favorites)
       lines.push(themeColors.bgModelRecommended(row))
