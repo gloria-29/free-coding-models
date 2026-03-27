@@ -1,6 +1,25 @@
 # Changelog
 ---
 
+## [0.3.26] - 2026-03-27
+
+### Added
+- **Groq**: Added Compound + Compound Mini; fixed Llama 4 Scout context (10M)
+- **OpenRouter**: Added MiniMax M2.5, Nemotron 3 Super, Hermes 3 405B, Gemma 3n E4B
+- **HuggingFace**: Replaced invalid DeepSeek-V3-Coder + outdated starcoder2-15b with DeepSeek V3 0324 + Qwen2.5 Coder 32B
+- **Replicate**: Replaced CodeLlama 70B (2023) with DeepSeek V3 0324 + Llama 3.3 70B
+- **Cloudflare**: Added Kimi K2.5, GLM-4.7-Flash, Llama 4 Scout, Nemotron 3 Super, Qwen3 30B MoE
+- **Scaleway**: Added Qwen3.5 400B VLM + Mistral Large 675B
+- **DeepInfra**: Replaced Mixtral Code with Nemotron 3 Super + DeepSeek V3 0324 + Qwen3 235B
+- **Fireworks**: Added Llama 4 Maverick + Qwen3 235B
+- **Hyperbolic**: Added Qwen3 80B Thinking variant
+- **Together AI**: Added Qwen3.5 400B VLM, MiniMax M2.5, GLM-5
+
+### Changed
+- **Rovo Dev CLI**: Updated Sonnet 4 → Sonnet 4.6, added Opus 4.6
+- **Groq**: Removed 4 deprecated models (R1 Distill 70B, QwQ 32B, Kimi K2, Maverick)
+- **OpenRouter**: Updated context sizes for multiple models
+
 ## [0.3.25] - 2026-03-19
 
 ### Added
