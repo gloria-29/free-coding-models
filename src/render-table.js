@@ -882,11 +882,11 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     ? chalk.rgb(255, 182, 193)(`Last release: ${lastReleaseDate}`)
     : ''
 
-  const xSupportBg = chalk.bgRgb(255, 0, 128).rgb(255, 255, 255).bold('🐦 Support me on X: ') +
+  const xSupportBg = chalk.bgRgb(140, 0, 80).rgb(255, 255, 255).bold('🐦 Follow me on X: ') +
     '\x1b]8;;https://x.com/vavanessadev\x1b\\' +
-    chalk.bgRgb(255, 0, 128).rgb(255, 255, 0).bold('@vavanessadev') +
+    chalk.bgRgb(140, 0, 80).rgb(255, 200, 50).bold('@vavanessadev') +
     '\x1b]8;;\x1b\\' +
-    chalk.bgRgb(255, 0, 128).rgb(255, 255, 255).bold(' 💖')
+    chalk.bgRgb(140, 0, 80).rgb(255, 255, 255).bold(' to check my other projects! 💖')
 
   lines.push(
     '  ' + themeColors.hotkey('N') + themeColors.dim(' Changelog') +

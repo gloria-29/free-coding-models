@@ -1,6 +1,12 @@
 # Changelog
 ---
 
+## [0.3.33] - 2026-04-01
+
+### Changed
+- **X badge darker fuchsia background** (`rgb(140,0,80)`) for better readability
+- **Updated text** → "Follow me on X: @vavanessadev to check my other projects! 💖"
+
 ## [0.3.32] - 2026-04-01
 
 ### Fixed
