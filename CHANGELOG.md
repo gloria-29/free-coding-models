@@ -1,31 +1,35 @@
 # Changelog
 ---
 
-## [0.3.37] - 2026-04-07
+## [0.3.36] - 2026-04-07
+
+### Added
+- **Settings Page** — Full API key management: add, edit, delete, reveal (masked with last 4 chars), and copy keys from the browser.
+- **Provider Toggle Switches** — Enable/disable providers with smooth toggle switches directly from Settings.
+- **Sidebar Navigation** — Collapsible sidebar with Dashboard, Settings, and Analytics views.
+- **Analytics View** — Provider health overview with % bars, Top 10 fastest models leaderboard, and tier distribution chart.
+- **Toast Notification System** — Beautiful slide-in notifications for save/delete/copy/error feedback.
+- **Export Modal** — Export filtered model data as JSON, CSV, or copy summary to clipboard.
+- **Provider Search** — Search/filter providers in the Settings page.
+- **Expand/Collapse All** — Bulk expand or collapse all provider cards in Settings.
 
 ### Changed
-- **Removed X/Twitter references** — no more `🐦 Follow me on X` links in README and TUI footer
-- **Discord link more prominent** in TUI footer (replaced X banner)
-- **README navigation bar** — now links all 10 sections (Why, Quick Start, Providers, Usage, TUI Keys, Features, Contributing, Licensing, Security, Support, License)
-- **Deleted accidental `echo` file** from repo
-- 238 models across 25 providers
+- Upgraded web dashboard from V1 (read-only) to V2 (full management console).
+- Improved sidebar hover-expand behavior with smooth label reveal.
+
+### Fixed
+- **P1**: Serialized ping rounds using recursive `setTimeout` instead of `setInterval` to prevent overlapping concurrent mutations when providers are slow.
+- **P2**: Disabled providers are now skipped during ping rounds, honoring the Settings toggle.
+- **P2**: `saveConfig` failures are now caught and returned as errors to the client instead of silently reporting success.
 
 ## [0.3.35] - 2026-04-07
 
 ### Added
-- **OVHcloud AI Endpoints** — new European sovereign AI provider (8 models: Qwen3 Coder 30B MoE, GPT OSS 120B, GPT OSS 20B, Llama 3.3 70B, Qwen3 32B, R1 Distill 70B, Mistral Small 3.2, Llama 3.1 8B)
-- Free sandbox mode: 2 req/min per IP per model (no API key needed), 400 RPM with API key
-- **Now 238 models across 25 providers** (was 230/24)
-
-### SECURITY.md
-- **SECURITY.md** — full security policy with vulnerability reporting, architecture, and supply chain docs
-- **CODEOWNERS** — all changes require @vava-nessa review
-- **Dependabot** — weekly automated dependency + GitHub Actions updates (`.github/dependabot.yml`)
-- **Security Audit CI** — `npm audit` + lockfile lint on every push/PR + weekly schedule (`.github/workflows/security-audit.yml`)
-- **npm Provenance** — release workflow now publishes with `--provenance` (Sigstore-signed)
-- **SBOM generation** — Software Bill of Materials attached to every GitHub Release
-- **README trust badges** — dependency count, provenance, supply chain badges
-- **README 🛡️ Security section** — what the tool does/doesn't do, supply chain table
+- **Web Dashboard / GUI Mode** — Launch a premium graphical interface using \`--web\` or \`--gui\` flag.
+- **Glassmorphism Design** — Real-time ping visualization, 🥇🥈🥉 medals, live stability scores, and sparklines.
+- **Background SSE Streaming** — The built-in Node.js server streams live data to the browser with zero dependencies.
+- **Quick Search & Filters** — Sort by any column, filter by tiers, or use the real-time search box (Ctrl+K).
+- **Detail Panel** — Slide-out side panel showing P95 latency, jitter (σ), and historical trends.
 
 ## [0.3.34] - 2026-04-06
 
