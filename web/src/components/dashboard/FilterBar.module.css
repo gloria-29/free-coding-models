@@ -1,0 +1,43 @@
+.filters {
+  position: relative; z-index: 1;
+  display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+  padding: 16px 24px;
+}
+.group { display: flex; align-items: center; gap: 8px; }
+.filterLabel {
+  font-size: 11px; font-weight: 600; color: var(--color-text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.tierRow { display: flex; gap: 4px; }
+.tierBtn {
+  font-size: 12px; font-weight: 600; font-family: var(--font-mono);
+  padding: 4px 10px; border-radius: 6px;
+  border: 1px solid var(--color-border); background: var(--color-surface);
+  color: var(--color-text-muted); cursor: pointer; transition: all 150ms;
+}
+.tierBtn:hover { background: var(--color-bg-hover); color: var(--color-text); }
+.active {
+  background: var(--color-accent) !important; color: #000 !important;
+  border-color: var(--color-accent) !important; font-weight: 700;
+}
+.providerSelect {
+  background: var(--color-surface); color: var(--color-text);
+  border: 1px solid var(--color-border); border-radius: 6px;
+  padding: 5px 10px; font-size: 12px; font-family: var(--font-sans);
+  cursor: pointer; outline: none;
+}
+.providerSelect:focus { border-color: var(--color-accent); }
+.spacer { flex: 1; }
+.live {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 700; color: var(--color-accent);
+  text-transform: uppercase; letter-spacing: 1px;
+}
+.liveDot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--color-accent); animation: pulseDot 2s ease-in-out infinite;
+}
+@keyframes pulseDot {
+  0%, 100% { box-shadow: 0 0 0 0 var(--color-accent-glow); }
+  50% { box-shadow: 0 0 0 6px transparent; }
+}

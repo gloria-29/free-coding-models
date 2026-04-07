@@ -1,0 +1,18 @@
+.badge {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-align: center;
+  min-width: 32px;
+}
+.tier_splus { background: rgba(255,215,0,0.15); color: #ffd700; border: 1px solid rgba(255,215,0,0.3); }
+.tier_s     { background: rgba(255,140,0,0.12); color: #ff8c00; border: 1px solid rgba(255,140,0,0.25); }
+.tier_aplus { background: rgba(0,200,255,0.1); color: #00c8ff; border: 1px solid rgba(0,200,255,0.2); }
+.tier_a     { background: rgba(61,220,132,0.1); color: #3ddc84; border: 1px solid rgba(61,220,132,0.2); }
+.tier_aminus{ background: rgba(126,207,126,0.1); color: #7ecf7e; border: 1px solid rgba(126,207,126,0.2); }
+.tier_bplus { background: rgba(168,168,200,0.1); color: #a8a8c8; border: 1px solid rgba(168,168,200,0.15); }
+.tier_b     { background: rgba(128,128,152,0.1); color: #808098; border: 1px solid rgba(128,128,152,0.15); }
+.tier_c     { background: rgba(96,96,120,0.1); color: #606078; border: 1px solid rgba(96,96,120,0.15); }

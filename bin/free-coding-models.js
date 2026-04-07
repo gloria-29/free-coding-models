@@ -50,7 +50,7 @@ async function main() {
   if (cliArgs.webMode) {
     const { startWebServer } = await import('../web/server.js')
     const port = parseInt(process.env.FCM_PORT || '3333', 10)
-    await startWebServer(port)
+    await startWebServer(port, { open: true })
     return
   }
 

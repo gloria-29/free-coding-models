@@ -18,9 +18,10 @@
  */
 
 import { createServer } from 'node:http'
-import { readFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { readFileSync, existsSync } from 'node:fs'
+import { join, dirname, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { exec } from 'node:child_process'
 
 import { sources, MODELS } from '../sources.js'
 import { loadConfig, getApiKey, saveConfig, isProviderEnabled } from '../src/config.js'
@@ -174,10 +175,38 @@ function maskApiKey(key) {
 
 // ─── HTTP Server ─────────────────────────────────────────────────────────────
 
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+}
+
 function serveFile(res, filename, contentType) {
   try {
     const content = readFileSync(join(__dirname, filename), 'utf8')
     res.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'no-cache' })
+    res.end(content)
+  } catch {
+    res.writeHead(404)
+    res.end('Not Found')
+  }
+}
+
+function serveDistFile(res, pathname) {
+  const filePath = join(__dirname, 'dist', pathname === '/' ? 'index.html' : pathname)
+  if (!existsSync(filePath)) {
+    serveFile(res, 'dist/index.html', 'text/html; charset=utf-8')
+    return
+  }
+  const ext = extname(filePath)
+  const ct = MIME_TYPES[ext] || 'application/octet-stream'
+  try {
+    const content = readFileSync(filePath)
+    res.writeHead(200, { 'Content-Type': ct, 'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=31536000, immutable' })
     res.end(content)
   } catch {
     res.writeHead(404)
@@ -211,16 +240,25 @@ function handleRequest(req, res) {
 
   switch (url.pathname) {
     case '/':
-      serveFile(res, 'index.html', 'text/html; charset=utf-8')
+      serveDistFile(res, '/')
       break
 
     case '/styles.css':
-      serveFile(res, 'styles.css', 'text/css; charset=utf-8')
+    case '/app.js':
+      serveDistFile(res, url.pathname)
       break
 
-    case '/app.js':
-      serveFile(res, 'app.js', 'application/javascript; charset=utf-8')
-      break
+    default:
+      if (url.pathname.startsWith('/assets/') || url.pathname.endsWith('.js') || url.pathname.endsWith('.css')) {
+        serveDistFile(res, url.pathname)
+        break
+      }
+
+      if (!url.pathname.startsWith('/api/')) {
+        res.writeHead(404)
+        res.end('Not Found')
+        break
+      }
 
     case '/api/models':
       res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -283,30 +321,57 @@ function handleRequest(req, res) {
         res.end('Method Not Allowed')
       }
       break
-
-    default:
-      res.writeHead(404)
-      res.end('Not Found')
   }
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function checkPortInUse(port) {
+  return new Promise((resolve) => {
+    const s = createServer()
+    s.once('error', (err) => { if (err.code === 'EADDRINUSE') resolve(true); else resolve(false) })
+    s.once('listening', () => { s.close(); resolve(false) })
+    s.listen(port)
+  })
+}
+
+function openBrowser(url) {
+  const cmd = process.platform === 'darwin' ? 'open'
+    : process.platform === 'win32' ? 'start'
+    : 'xdg-open'
+  exec(`${cmd} "${url}"`, (err) => {
+    if (err) console.log(`  💡 Open manually: ${url}`)
+  })
 }
 
 // ─── Exports ─────────────────────────────────────────────────────────────────
 
-export async function startWebServer(port = 3333) {
+export async function startWebServer(port = 3333, { open = true } = {}) {
+  const alreadyRunning = await checkPortInUse(port)
+  const url = `http://localhost:${port}`
+
+  if (alreadyRunning) {
+    console.log()
+    console.log(`  ⚡ free-coding-models Web Dashboard already running`)
+    console.log(`  🌐 ${url}`)
+    console.log()
+    if (open) openBrowser(url)
+    return null
+  }
+
   const server = createServer(handleRequest)
 
   server.listen(port, () => {
     console.log()
     console.log(`  ⚡ free-coding-models Web Dashboard`)
-    console.log(`  🌐 http://localhost:${port}`)
+    console.log(`  🌐 ${url}`)
     console.log(`  📊 Monitoring ${results.filter(r => !r.cliOnly).length} models across ${Object.keys(sources).length} providers`)
     console.log()
     console.log(`  Press Ctrl+C to stop`)
     console.log()
+    if (open) openBrowser(url)
   })
 
-  // P1 fix: serialize ping rounds — each round starts only after the
-  // previous one finishes, preventing overlapping concurrent mutations.
   async function schedulePingLoop() {
     await pingAllModels()
     setTimeout(schedulePingLoop, 10_000)

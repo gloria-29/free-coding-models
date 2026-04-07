@@ -36,12 +36,14 @@ const ANALYSIS_FLAGS = [
 ]
 
 const CONFIG_FLAGS = [
+  { flag: '--web', description: 'Launch the web dashboard in your browser' },
   { flag: '--no-telemetry', description: 'Disable anonymous telemetry for this run' },
   { flag: '--help, -h', description: 'Print this help and exit' },
 ]
 
 const EXAMPLES = [
   'free-coding-models --help',
+  'free-coding-models --web',
   'free-coding-models --openclaw --tier S',
   "free-coding-models --json | jq '.[0]'",
 ]

@@ -461,8 +461,8 @@ export function parseArgs(argv) {
   const helpMode = flags.includes('--help') || flags.includes('-h')
   const premiumMode = flags.includes('--premium')
 
-  // 📖 --web / --gui — launch the web dashboard instead of the TUI
-  const webMode = flags.includes('--web') || flags.includes('--gui')
+  // 📖 --web / --gui / web subcommand — launch the web dashboard instead of the TUI
+  const webMode = flags.includes('--web') || flags.includes('--gui') || args[0] === 'web'
 
   // New boolean flags
   const sortDesc = flags.includes('--desc')
