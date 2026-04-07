@@ -1,6 +1,6 @@
 /**
  * @file web/server.js
- * @description HTTP server for the free-coding-models Web Dashboard.
+ * @description HTTP server for the free-coding-models Web Dashboard V2.
  *
  * Reuses the existing ping engine, model sources, and utility functions
  * from the CLI tool. Serves the dashboard HTML/CSS/JS and provides
@@ -11,7 +11,8 @@
  *   GET /styles.css    → Dashboard styles
  *   GET /app.js        → Dashboard client JS
  *   GET /api/models    → All model metadata (JSON)
- *   GET /api/config    → Current config (sanitized — no raw keys)
+ *   GET /api/config    → Current config (sanitized — masked keys)
+ *   GET /api/key/:prov → Reveal a provider's full API key
  *   GET /api/events    → SSE stream of live ping results
  *   POST /api/settings → Update API keys / provider toggles
  */
@@ -57,13 +58,21 @@ const results = MODELS.map(([modelId, label, tier, sweScore, ctx, providerKey], 
 const sseClients = new Set()
 
 // ─── Ping Loop ───────────────────────────────────────────────────────────────
+// Uses recursive setTimeout (not setInterval) to prevent overlapping rounds.
+// Each new round starts only after the previous one completes.
 
 let pingRound = 0
+let pingLoopRunning = false
 
 async function pingAllModels() {
+  if (pingLoopRunning) return // guard against overlapping calls
+  pingLoopRunning = true
   pingRound++
   const batchSize = 30
-  const modelsToPing = results.filter(r => !r.cliOnly && r.url)
+  // P2 fix: honor provider enabled flags — skip disabled providers
+  const modelsToPing = results.filter(r =>
+    !r.cliOnly && r.url && isProviderEnabled(config, r.providerKey)
+  )
 
   for (let i = 0; i < modelsToPing.length; i += batchSize) {
     const batch = modelsToPing.slice(i, i + batchSize)
@@ -98,6 +107,7 @@ async function pingAllModels() {
 
   // Broadcast update to all SSE clients
   broadcastUpdate()
+  pingLoopRunning = false
 }
 
 function broadcastUpdate() {
@@ -143,15 +153,23 @@ function getConfigPayload() {
   // Sanitize — show which providers have keys, but not the actual keys
   const providers = {}
   for (const [key, src] of Object.entries(sources)) {
+    const rawKey = getApiKey(config, key)
     providers[key] = {
       name: src.name,
-      hasKey: !!getApiKey(config, key),
+      hasKey: !!rawKey,
+      maskedKey: rawKey ? maskApiKey(rawKey) : null,
       enabled: isProviderEnabled(config, key),
       modelCount: src.models?.length || 0,
       cliOnly: src.cliOnly || false,
     }
   }
   return { providers, totalModels: MODELS.length }
+}
+
+function maskApiKey(key) {
+  if (!key || typeof key !== 'string') return ''
+  if (key.length <= 8) return '••••••••'
+  return '••••••••' + key.slice(-4)
 }
 
 // ─── HTTP Server ─────────────────────────────────────────────────────────────
@@ -180,6 +198,16 @@ function handleRequest(req, res) {
   }
 
   const url = new URL(req.url, `http://${req.headers.host}`)
+
+  // ─── API: Reveal full key for a provider ───
+  const keyMatch = url.pathname.match(/^\/api\/key\/(.+)$/)
+  if (keyMatch) {
+    const providerKey = decodeURIComponent(keyMatch[1])
+    const rawKey = getApiKey(config, providerKey)
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ key: rawKey || null }))
+    return
+  }
 
   switch (url.pathname) {
     case '/':
@@ -235,7 +263,14 @@ function handleRequest(req, res) {
                 config.providers[key].enabled = value.enabled !== false
               }
             }
-            saveConfig(config)
+            // P2 fix: catch saveConfig failures and report to client
+            try {
+              saveConfig(config)
+            } catch (saveErr) {
+              res.writeHead(500, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ success: false, error: 'Failed to save config: ' + saveErr.message }))
+              return
+            }
             res.writeHead(200, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify({ success: true }))
           } catch (err) {
@@ -270,11 +305,13 @@ export async function startWebServer(port = 3333) {
     console.log()
   })
 
-  // Start initial ping immediately
-  pingAllModels()
-
-  // Then ping every 10s
-  setInterval(pingAllModels, 10_000)
+  // P1 fix: serialize ping rounds — each round starts only after the
+  // previous one finishes, preventing overlapping concurrent mutations.
+  async function schedulePingLoop() {
+    await pingAllModels()
+    setTimeout(schedulePingLoop, 10_000)
+  }
+  schedulePingLoop()
 
   return server
 }

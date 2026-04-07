@@ -1,10 +1,14 @@
 /**
  * @file web/app.js
- * @description Client-side JavaScript for the free-coding-models Web Dashboard.
+ * @description Client-side JavaScript for the free-coding-models Web Dashboard V2.
  *
- * Connects to the SSE endpoint for real-time model updates,
- * renders the data table, handles sorting/filtering, and manages
- * the settings modal and detail panel.
+ * Features:
+ *   - Real-time SSE model updates
+ *   - Sidebar navigation (Dashboard / Settings / Analytics)
+ *   - Full API key management (add, edit, delete, reveal, copy)
+ *   - Toast notification system
+ *   - Export (JSON, CSV, clipboard)
+ *   - Analytics view with provider health, leaderboard, tier distribution
  */
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -19,6 +23,9 @@ let searchQuery = ''
 let selectedModelId = null
 let eventSource = null
 let updateCount = 0
+let configData = null
+let revealedKeys = new Set()
+let currentView = 'dashboard'
 
 // ─── DOM References ───────────────────────────────────────────────────────────
 
@@ -29,20 +36,39 @@ const tableBody = $('#table-body')
 const searchInput = $('#search-input')
 const themeToggle = $('#theme-toggle')
 const settingsBtn = $('#settings-btn')
-const settingsModal = $('#settings-modal')
-const settingsClose = $('#settings-close')
-const settingsBody = $('#settings-body')
 const detailPanel = $('#detail-panel')
 const detailClose = $('#detail-close')
 const detailTitle = $('#detail-title')
 const detailBody = $('#detail-body')
 const providerFilter = $('#provider-filter')
+const toastContainer = $('#toast-container')
+
+// ─── Toast Notification System ───────────────────────────────────────────────
+
+function showToast(message, type = 'info', duration = 3500) {
+  const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' }
+  const toast = document.createElement('div')
+  toast.className = `toast toast--${type}`
+  toast.innerHTML = `
+    <span class="toast__icon">${icons[type] || '📌'}</span>
+    <span class="toast__message">${escapeHtml(message)}</span>
+    <button class="toast__close">&times;</button>
+  `
+  toastContainer.appendChild(toast)
+
+  const closeBtn = toast.querySelector('.toast__close')
+  const dismiss = () => {
+    toast.classList.add('toast--exiting')
+    setTimeout(() => toast.remove(), 300)
+  }
+  closeBtn.addEventListener('click', dismiss)
+  setTimeout(dismiss, duration)
+}
 
 // ─── SSE Connection ──────────────────────────────────────────────────────────
 
 function connectSSE() {
   if (eventSource) eventSource.close()
-
   eventSource = new EventSource('/api/events')
 
   eventSource.onmessage = (event) => {
@@ -50,8 +76,11 @@ function connectSSE() {
       const data = JSON.parse(event.data)
       models = data
       updateCount++
-      renderTable()
-      updateStats()
+      if (currentView === 'dashboard') {
+        renderTable()
+        updateStats()
+      }
+      if (currentView === 'analytics') renderAnalytics()
       if (updateCount === 1) populateProviderFilter()
       if (selectedModelId) updateDetailPanel()
     } catch (e) {
@@ -65,17 +94,31 @@ function connectSSE() {
   }
 }
 
+// ─── View Navigation ─────────────────────────────────────────────────────────
+
+function switchView(viewId) {
+  currentView = viewId
+  $$('.view').forEach(v => v.classList.add('view--hidden'))
+  $(`#view-${viewId}`).classList.remove('view--hidden')
+  $$('.sidebar__nav-item').forEach(n => n.classList.remove('sidebar__nav-item--active'))
+  $(`#nav-${viewId}`)?.classList.add('sidebar__nav-item--active')
+
+  if (viewId === 'settings') loadSettingsPage()
+  if (viewId === 'analytics') renderAnalytics()
+}
+
+$$('.sidebar__nav-item[data-view]').forEach(btn => {
+  btn.addEventListener('click', () => switchView(btn.dataset.view))
+})
+
+settingsBtn.addEventListener('click', () => switchView('settings'))
+
 // ─── Rendering ───────────────────────────────────────────────────────────────
 
 function getFilteredModels() {
   let filtered = [...models]
 
-  // Tier filter
-  if (filterTier !== 'all') {
-    filtered = filtered.filter(m => m.tier === filterTier)
-  }
-
-  // Status filter
+  if (filterTier !== 'all') filtered = filtered.filter(m => m.tier === filterTier)
   if (filterStatus !== 'all') {
     filtered = filtered.filter(m => {
       if (filterStatus === 'up') return m.status === 'up'
@@ -84,13 +127,7 @@ function getFilteredModels() {
       return true
     })
   }
-
-  // Provider filter
-  if (filterProvider !== 'all') {
-    filtered = filtered.filter(m => m.providerKey === filterProvider)
-  }
-
-  // Search filter
+  if (filterProvider !== 'all') filtered = filtered.filter(m => m.providerKey === filterProvider)
   if (searchQuery) {
     const q = searchQuery.toLowerCase()
     filtered = filtered.filter(m =>
@@ -102,11 +139,9 @@ function getFilteredModels() {
     )
   }
 
-  // Sort
   filtered.sort((a, b) => {
     let cmp = 0
     const col = sortColumn
-
     if (col === 'idx') cmp = a.idx - b.idx
     else if (col === 'tier') cmp = tierRank(a.tier) - tierRank(b.tier)
     else if (col === 'label') cmp = a.label.localeCompare(b.label)
@@ -118,7 +153,6 @@ function getFilteredModels() {
     else if (col === 'stability') cmp = (a.stability ?? -1) - (b.stability ?? -1)
     else if (col === 'verdict') cmp = verdictRank(a.verdict) - verdictRank(b.verdict)
     else if (col === 'uptime') cmp = (a.uptime ?? 0) - (b.uptime ?? 0)
-
     return sortDirection === 'asc' ? cmp : -cmp
   })
 
@@ -141,7 +175,6 @@ function renderTable() {
     return
   }
 
-  // Find top 3 by avg for medals
   const onlineModels = filtered.filter(m => m.status === 'up' && m.avg !== Infinity)
   const sorted = [...onlineModels].sort((a, b) => a.avg - b.avg)
   const top3 = sorted.slice(0, 3).map(m => m.modelId)
@@ -178,7 +211,6 @@ function renderTable() {
 
   tableBody.innerHTML = html
 
-  // Attach row click handlers
   tableBody.querySelectorAll('tr[data-model-id]').forEach(row => {
     row.addEventListener('click', () => {
       selectedModelId = row.dataset.modelId
@@ -277,14 +309,20 @@ function updateStats() {
   const avgLatency = onlineWithPing.length > 0
     ? Math.round(onlineWithPing.reduce((s, m) => s + m.avg, 0) / onlineWithPing.length)
     : null
-  const fastest = onlineWithPing.sort((a, b) => a.avg - b.avg)[0]
+  const fastest = [...onlineWithPing].sort((a, b) => a.avg - b.avg)[0]
   const providers = new Set(models.map(m => m.providerKey)).size
 
-  $('#stat-total-value').textContent = total
-  $('#stat-online-value').textContent = online
+  animateValue($('#stat-total-value'), total)
+  animateValue($('#stat-online-value'), online)
   $('#stat-avg-value').textContent = avgLatency != null ? `${avgLatency}ms` : '—'
   $('#stat-best-value').textContent = fastest ? fastest.label : '—'
-  $('#stat-providers-value').textContent = providers
+  animateValue($('#stat-providers-value'), providers)
+}
+
+function animateValue(el, newVal) {
+  const current = parseInt(el.textContent) || 0
+  if (current === newVal) return
+  el.textContent = newVal
 }
 
 // ─── Provider Filter Dropdown ────────────────────────────────────────────────
@@ -303,7 +341,6 @@ function populateProviderFilter() {
 function showDetailPanel(modelId) {
   const model = models.find(m => m.modelId === modelId)
   if (!model) return
-
   detailPanel.removeAttribute('hidden')
   detailTitle.textContent = model.label
   updateDetailPanel()
@@ -376,7 +413,6 @@ function updateDetailPanel() {
       <span class="detail-stat__label">API Key</span>
       <span class="detail-stat__value">${model.hasApiKey ? '✅ Configured' : '❌ Missing'}</span>
     </div>
-
     <div class="detail-chart">
       <div class="detail-chart__title">Latency Trend (last 20 pings)</div>
       ${chartSvg}
@@ -395,10 +431,8 @@ function buildDetailChart(history) {
   const min = Math.min(...values, 0)
   const range = max - min || 1
   const w = 340, h = 100
-  const step = w / (values.length - 1)
   const padding = 4
 
-  // Build gradient area
   const points = values.map((v, i) => {
     const x = padding + i * ((w - 2 * padding) / (values.length - 1))
     const y = padding + (h - 2 * padding) - ((v - min) / range) * (h - 2 * padding)
@@ -423,38 +457,353 @@ function buildDetailChart(history) {
   </svg>`
 }
 
-// ─── Settings Modal ──────────────────────────────────────────────────────────
+// ═══════ SETTINGS PAGE ═══════════════════════════════════════════════════════
 
-async function loadSettings() {
+async function loadSettingsPage() {
   try {
     const resp = await fetch('/api/config')
-    const config = await resp.json()
-
-    settingsBody.innerHTML = Object.entries(config.providers).map(([key, p]) => {
-      return `<div class="settings-provider">
-        <span class="settings-provider__name">${escapeHtml(p.name)}</span>
-        <span class="settings-provider__models">${p.modelCount} models</span>
-        <span class="settings-provider__status ${p.hasKey ? 'settings-provider__status--configured' : 'settings-provider__status--missing'}">
-          ${p.hasKey ? '✅ Configured' : '🔑 No Key'}
-        </span>
-      </div>`
-    }).join('')
+    configData = await resp.json()
+    renderSettingsProviders()
   } catch (e) {
-    settingsBody.innerHTML = '<p style="color:var(--color-text-muted)">Failed to load settings</p>'
+    showToast('Failed to load settings', 'error')
   }
+}
+
+function renderSettingsProviders(searchFilter = '') {
+  if (!configData) return
+  const container = $('#settings-providers')
+  const entries = Object.entries(configData.providers)
+    .filter(([key, p]) => {
+      if (!searchFilter) return true
+      const q = searchFilter.toLowerCase()
+      return p.name.toLowerCase().includes(q) || key.toLowerCase().includes(q)
+    })
+    .sort((a, b) => a[1].name.localeCompare(b[1].name))
+
+  container.innerHTML = entries.map(([key, p]) => {
+    const isRevealed = revealedKeys.has(key)
+    const maskedKey = p.hasKey ? (isRevealed ? (p.maskedKey || '••••••••') : maskKey(p.maskedKey || '')) : ''
+
+    return `<div class="settings-card" data-provider="${key}" id="settings-card-${key}">
+      <div class="settings-card__header" onclick="toggleSettingsCard('${key}')">
+        <div class="settings-card__icon">🔌</div>
+        <div class="settings-card__info">
+          <div class="settings-card__name">${escapeHtml(p.name)}</div>
+          <div class="settings-card__meta">${p.modelCount} models · ${escapeHtml(key)}</div>
+        </div>
+        <span class="settings-card__status ${p.hasKey ? 'settings-card__status--configured' : 'settings-card__status--missing'}">
+          ${p.hasKey ? '✅ Active' : '🔑 No Key'}
+        </span>
+        <span class="settings-card__toggle-icon">▼</span>
+      </div>
+      <div class="settings-card__body">
+        <div class="settings-card__content">
+          ${p.hasKey ? `
+            <div class="api-key-group">
+              <label class="api-key-group__label">Current API Key</label>
+              <div class="api-key-display">
+                <span class="api-key-display__value" id="key-display-${key}">${maskedKey}</span>
+                <div class="api-key-display__actions">
+                  <button class="btn btn--sm btn--icon" onclick="toggleRevealKey('${key}')" title="${isRevealed ? 'Hide' : 'Reveal'}">
+                    ${isRevealed ? '🙈' : '👁️'}
+                  </button>
+                  <button class="btn btn--sm btn--icon" onclick="copyKey('${key}')" title="Copy">📋</button>
+                  <button class="btn btn--sm btn--danger" onclick="deleteKey('${key}')" title="Delete Key">🗑️</button>
+                </div>
+              </div>
+            </div>
+          ` : ''}
+          <div class="api-key-group">
+            <label class="api-key-group__label">${p.hasKey ? 'Update API Key' : 'Add API Key'}</label>
+            <div class="api-key-group__row">
+              <input type="password" class="api-key-group__input" id="key-input-${key}"
+                     placeholder="Enter your API key..." autocomplete="off">
+              <button class="btn btn--sm btn--success" onclick="saveKey('${key}')">
+                ${p.hasKey ? 'Update' : 'Save'}
+              </button>
+            </div>
+          </div>
+          <div class="settings-card__enabled">
+            <span class="settings-card__enabled-label">Provider Enabled</span>
+            <label class="toggle-switch">
+              <input type="checkbox" ${p.enabled !== false ? 'checked' : ''} onchange="toggleProvider('${key}', this.checked)">
+              <span class="toggle-switch__slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>`
+  }).join('')
+}
+
+// Settings: Global actions
+window.toggleSettingsCard = function(key) {
+  const card = $(`#settings-card-${key}`)
+  if (card) card.classList.toggle('settings-card--expanded')
+}
+
+window.toggleRevealKey = async function(key) {
+  if (revealedKeys.has(key)) {
+    revealedKeys.delete(key)
+    renderSettingsProviders($('#settings-search')?.value || '')
+    return
+  }
+
+  try {
+    const resp = await fetch(`/api/key/${key}`)
+    const data = await resp.json()
+    if (data.key) {
+      revealedKeys.add(key)
+      const display = $(`#key-display-${key}`)
+      if (display) display.textContent = data.key
+      // Re-render to update button icon
+      const card = $(`#settings-card-${key}`)
+      const wasExpanded = card?.classList.contains('settings-card--expanded')
+      renderSettingsProviders($('#settings-search')?.value || '')
+      if (wasExpanded) $(`#settings-card-${key}`)?.classList.add('settings-card--expanded')
+    }
+  } catch {
+    showToast('Failed to reveal key', 'error')
+  }
+}
+
+window.copyKey = async function(key) {
+  try {
+    const resp = await fetch(`/api/key/${key}`)
+    const data = await resp.json()
+    if (data.key) {
+      await navigator.clipboard.writeText(data.key)
+      showToast('API key copied to clipboard', 'success')
+    } else {
+      showToast('No key to copy', 'warning')
+    }
+  } catch {
+    showToast('Failed to copy key', 'error')
+  }
+}
+
+window.saveKey = async function(key) {
+  const input = $(`#key-input-${key}`)
+  const value = input?.value?.trim()
+  if (!value) {
+    showToast('Please enter an API key', 'warning')
+    return
+  }
+
+  try {
+    const resp = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKeys: { [key]: value } })
+    })
+    const result = await resp.json()
+    if (result.success) {
+      showToast(`API key for ${key} saved successfully!`, 'success')
+      input.value = ''
+      revealedKeys.delete(key)
+      await loadSettingsPage()
+      // Re-expand the card
+      $(`#settings-card-${key}`)?.classList.add('settings-card--expanded')
+    } else {
+      showToast(result.error || 'Failed to save', 'error')
+    }
+  } catch {
+    showToast('Network error while saving', 'error')
+  }
+}
+
+window.deleteKey = async function(key) {
+  if (!confirm(`Are you sure you want to delete the API key for "${key}"?`)) return
+
+  try {
+    const resp = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKeys: { [key]: '' } })
+    })
+    const result = await resp.json()
+    if (result.success) {
+      showToast(`API key for ${key} deleted`, 'info')
+      revealedKeys.delete(key)
+      await loadSettingsPage()
+    } else {
+      showToast(result.error || 'Failed to delete', 'error')
+    }
+  } catch {
+    showToast('Network error while deleting', 'error')
+  }
+}
+
+window.toggleProvider = async function(key, enabled) {
+  try {
+    const resp = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providers: { [key]: { enabled } } })
+    })
+    const result = await resp.json()
+    if (result.success) {
+      showToast(`${key} ${enabled ? 'enabled' : 'disabled'}`, 'success')
+    } else {
+      showToast(result.error || 'Failed to toggle', 'error')
+    }
+  } catch {
+    showToast('Network error', 'error')
+  }
+}
+
+function maskKey(key) {
+  if (!key || key.length < 8) return '••••••••'
+  return '••••••••' + key.slice(-4)
+}
+
+// Settings search
+$('#settings-search')?.addEventListener('input', (e) => {
+  renderSettingsProviders(e.target.value)
+})
+
+$('#settings-expand-all')?.addEventListener('click', () => {
+  $$('.settings-card').forEach(c => c.classList.add('settings-card--expanded'))
+})
+$('#settings-collapse-all')?.addEventListener('click', () => {
+  $$('.settings-card').forEach(c => c.classList.remove('settings-card--expanded'))
+})
+
+// ═══════ ANALYTICS VIEW ═════════════════════════════════════════════════════
+
+function renderAnalytics() {
+  if (!models.length) return
+  renderProviderHealth()
+  renderLeaderboard()
+  renderTierDistribution()
+}
+
+function renderProviderHealth() {
+  const providerMap = {}
+  models.forEach(m => {
+    if (!providerMap[m.origin]) providerMap[m.origin] = { total: 0, online: 0, key: m.providerKey }
+    providerMap[m.origin].total++
+    if (m.status === 'up') providerMap[m.origin].online++
+  })
+
+  const entries = Object.entries(providerMap).sort((a, b) => {
+    const pctA = a[1].online / a[1].total
+    const pctB = b[1].online / b[1].total
+    return pctB - pctA
+  })
+
+  const html = entries.map(([name, data]) => {
+    const pct = data.total > 0 ? Math.round((data.online / data.total) * 100) : 0
+    return `<div class="provider-health-item">
+      <span class="provider-health__name">${escapeHtml(name)}</span>
+      <div class="provider-health__bar"><div class="provider-health__fill" style="width:${pct}%"></div></div>
+      <span class="provider-health__pct ${pct > 70 ? 'ping-fast' : pct > 30 ? 'ping-medium' : 'ping-slow'}">${pct}%</span>
+    </div>`
+  }).join('')
+
+  $('#provider-health-body').innerHTML = html || '<div style="color:var(--color-text-dim);">Waiting for data...</div>'
+}
+
+function renderLeaderboard() {
+  const online = models.filter(m => m.status === 'up' && m.avg !== Infinity && m.avg < 99000)
+  const top10 = [...online].sort((a, b) => a.avg - b.avg).slice(0, 10)
+
+  const html = top10.map((m, i) => {
+    const rankClass = i < 3 ? `leaderboard__rank--${i + 1}` : ''
+    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1)
+    return `<div class="leaderboard-item">
+      <div class="leaderboard__rank ${rankClass}">${medal}</div>
+      <span class="leaderboard__name">${escapeHtml(m.label)}</span>
+      <span class="leaderboard__latency">${m.avg}ms</span>
+    </div>`
+  }).join('')
+
+  $('#leaderboard-body').innerHTML = html || '<div style="color:var(--color-text-dim);">Waiting for ping data...</div>'
+}
+
+function renderTierDistribution() {
+  const tierColors = { 'S+': '#ffd700', 'S': '#ff8c00', 'A+': '#00c8ff', 'A': '#3ddc84', 'A-': '#7ecf7e', 'B+': '#a8a8c8', 'B': '#808098', 'C': '#606078' }
+  const tierCounts = {}
+  models.forEach(m => { tierCounts[m.tier] = (tierCounts[m.tier] || 0) + 1 })
+  const maxCount = Math.max(...Object.values(tierCounts), 1)
+
+  const tiers = ['S+', 'S', 'A+', 'A', 'A-', 'B+', 'B', 'C']
+  const html = tiers.map(t => {
+    const count = tierCounts[t] || 0
+    const pct = (count / maxCount) * 100
+    return `<div class="tier-dist-item">
+      <div class="tier-dist__badge">${tierBadge(t)}</div>
+      <div class="tier-dist__bar"><div class="tier-dist__fill" style="width:${pct}%; background:${tierColors[t]}"></div></div>
+      <span class="tier-dist__count">${count}</span>
+    </div>`
+  }).join('')
+
+  $('#tier-dist-body').innerHTML = html
+}
+
+// ═══════ EXPORT ═════════════════════════════════════════════════════════════
+
+const exportModal = $('#export-modal')
+const exportBtn = $('#export-btn')
+const exportClose = $('#export-close')
+
+exportBtn?.addEventListener('click', () => { exportModal.hidden = false })
+exportClose?.addEventListener('click', () => { exportModal.hidden = true })
+exportModal?.addEventListener('click', (e) => { if (e.target === exportModal) exportModal.hidden = true })
+
+$('#export-json')?.addEventListener('click', () => {
+  const data = JSON.stringify(getFilteredModels(), null, 2)
+  downloadFile(data, 'free-coding-models-export.json', 'application/json')
+  showToast('Exported as JSON', 'success')
+  exportModal.hidden = true
+})
+
+$('#export-csv')?.addEventListener('click', () => {
+  const filtered = getFilteredModels()
+  const headers = ['Rank', 'Tier', 'Model', 'Provider', 'SWE%', 'Context', 'LatestPing', 'AvgPing', 'Stability', 'Verdict', 'Uptime']
+  const rows = filtered.map((m, i) =>
+    [i + 1, m.tier, m.label, m.origin, m.sweScore || '', m.ctx || '', m.latestPing || '', m.avg === Infinity ? '' : m.avg, m.stability || '', m.verdict || '', m.uptime || ''].join(',')
+  )
+  const csv = [headers.join(','), ...rows].join('\n')
+  downloadFile(csv, 'free-coding-models-export.csv', 'text/csv')
+  showToast('Exported as CSV', 'success')
+  exportModal.hidden = true
+})
+
+$('#export-clipboard')?.addEventListener('click', async () => {
+  const filtered = getFilteredModels()
+  const online = filtered.filter(m => m.status === 'up')
+  const text = `free-coding-models Dashboard Export\n` +
+    `Total: ${filtered.length} | Online: ${online.length}\n\n` +
+    online.slice(0, 20).map((m, i) =>
+      `${i + 1}. ${m.label} [${m.tier}] — ${m.avg !== Infinity ? m.avg + 'ms' : 'N/A'} (${m.origin})`
+    ).join('\n')
+  await navigator.clipboard.writeText(text)
+  showToast('Copied to clipboard', 'success')
+  exportModal.hidden = true
+})
+
+function downloadFile(content, filename, type) {
+  const blob = new Blob([content], { type })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
 }
 
 // ─── Event Handlers ──────────────────────────────────────────────────────────
 
 // Theme toggle
-themeToggle.addEventListener('click', () => {
+const toggleTheme = () => {
   const html = document.documentElement
   const current = html.getAttribute('data-theme')
   html.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark')
-})
+}
+themeToggle?.addEventListener('click', toggleTheme)
+$('#sidebar-theme-toggle')?.addEventListener('click', toggleTheme)
 
 // Search
-searchInput.addEventListener('input', (e) => {
+searchInput?.addEventListener('input', (e) => {
   searchQuery = e.target.value
   renderTable()
 })
@@ -463,16 +812,17 @@ searchInput.addEventListener('input', (e) => {
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
     e.preventDefault()
-    searchInput.focus()
+    if (currentView !== 'dashboard') switchView('dashboard')
+    searchInput?.focus()
   }
   if (e.key === 'Escape') {
-    if (!settingsModal.hidden) settingsModal.hidden = true
     if (!detailPanel.hidden) { detailPanel.hidden = true; selectedModelId = null }
+    if (!exportModal.hidden) exportModal.hidden = true
   }
 })
 
-// Tier filter buttons
-$('#tier-filters').addEventListener('click', (e) => {
+// Tier filter
+$('#tier-filters')?.addEventListener('click', (e) => {
   const btn = e.target.closest('.tier-btn')
   if (!btn) return
   filterTier = btn.dataset.tier
@@ -481,8 +831,8 @@ $('#tier-filters').addEventListener('click', (e) => {
   renderTable()
 })
 
-// Status filter buttons
-$('#status-filters').addEventListener('click', (e) => {
+// Status filter
+$('#status-filters')?.addEventListener('click', (e) => {
   const btn = e.target.closest('.status-btn')
   if (!btn) return
   filterStatus = btn.dataset.status
@@ -491,14 +841,14 @@ $('#status-filters').addEventListener('click', (e) => {
   renderTable()
 })
 
-// Provider filter dropdown
-providerFilter.addEventListener('change', (e) => {
+// Provider filter
+providerFilter?.addEventListener('change', (e) => {
   filterProvider = e.target.value
   renderTable()
 })
 
 // Table header sorting
-$('#models-table thead').addEventListener('click', (e) => {
+$('#models-table thead')?.addEventListener('click', (e) => {
   const th = e.target.closest('th.sortable')
   if (!th) return
   const col = th.dataset.sort
@@ -506,27 +856,15 @@ $('#models-table thead').addEventListener('click', (e) => {
     sortDirection = sortDirection === 'asc' ? 'desc' : 'asc'
   } else {
     sortColumn = col
-    // Default direction based on column type
-    sortDirection = ['label', 'origin', 'tier', 'verdict'].includes(col) ? 'asc' : 'asc'
+    sortDirection = 'asc'
   }
-  // Update active header visual
   $$('th.sortable').forEach(t => t.classList.remove('sort-active'))
   th.classList.add('sort-active')
   renderTable()
 })
 
-// Settings modal
-settingsBtn.addEventListener('click', () => {
-  settingsModal.hidden = false
-  loadSettings()
-})
-settingsClose.addEventListener('click', () => { settingsModal.hidden = true })
-settingsModal.addEventListener('click', (e) => {
-  if (e.target === settingsModal) settingsModal.hidden = true
-})
-
 // Detail panel close
-detailClose.addEventListener('click', () => {
+detailClose?.addEventListener('click', () => {
   detailPanel.hidden = true
   selectedModelId = null
 })
