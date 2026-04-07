@@ -1,18 +1,14 @@
 # Changelog
 ---
 
-# Changelog
----
-
-## [0.3.36] - 2026-04-07
+## [0.3.37] - 2026-04-07
 
 ### Changed
 - **Removed X/Twitter references** — no more `🐦 Follow me on X` links in README and TUI footer
 - **Discord link more prominent** in TUI footer (replaced X banner)
-
-- README cleaned up — removed X follow paragraph entirely
-
-- Now 238 models across 25 providers
+- **README navigation bar** — now links all 10 sections (Why, Quick Start, Providers, Usage, TUI Keys, Features, Contributing, Licensing, Security, Support, License)
+- **Deleted accidental `echo` file** from repo
+- 238 models across 25 providers
 
 ## [0.3.35] - 2026-04-07
 

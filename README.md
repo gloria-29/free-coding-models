@@ -31,12 +31,17 @@ create a free account on one of the [providers](#-list-of-free-ai-providers)
 </p>
 
 <p align="center">
-  <a href="#-why-this-tool">Why</a> •
-  <a href="#-quick-start">Quick Start</a> •
-  <a href="#-list-of-free-ai-providers">Providers</a> •
-  <a href="#-usage">Usage</a> •
-  <a href="#-tui-keys">TUI Keys</a> •
-  <a href="#-contributing">Contributing</a>
+  <a href="#-why-this-tool">💡 Why</a> •
+  <a href="#-quick-start">⚡ Quick Start</a> •
+  <a href="#-list-of-free-ai-providers">🟢 Providers</a> •
+  <a href="#-usage">🚀 Usage</a> •
+  <a href="#-tui-keys">⌨️ TUI Keys</a> •
+  <a href="#-features">✨ Features</a> •
+  <a href="#-contributing">📋 Contributing</a> •
+  <a href="#️-model-licensing--commercial-use">⚖️ Licensing</a> •
+  <a href="#️-security--trust">🛡️ Security</a> •
+  <a href="#-support">📧 Support</a> •
+  <a href="#-license">📄 License</a>
 </p>
 
 <p align="center">
