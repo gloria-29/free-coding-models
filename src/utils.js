@@ -455,6 +455,9 @@ export function parseArgs(argv) {
   const ampMode = flags.includes('--amp')
   const piMode = flags.includes('--pi')
   const rovoMode = flags.includes('--rovo')
+  const hermesMode = flags.includes('--hermes')
+  const continueMode = flags.includes('--continue')
+  const clineMode = flags.includes('--cline')
   const geminiMode = flags.includes('--gemini')
   const noTelemetry = flags.includes('--no-telemetry')
   const jsonMode = flags.includes('--json')
@@ -495,6 +498,9 @@ export function parseArgs(argv) {
     openHandsMode,
     ampMode,
     piMode,
+    hermesMode,
+    continueMode,
+    clineMode,
     rovoMode,
     geminiMode,
     noTelemetry,

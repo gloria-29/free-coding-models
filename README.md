@@ -14,7 +14,7 @@
 
 <p align="center">
   <strong>Find the fastest free coding model in seconds</strong><br>
-  <sub>Ping 238 models across 25 AI Free providers in real-time </sub><br><sub> Install Free API endpoints to your favorite AI coding tool: <br>📦 OpenCode, 🦞 OpenClaw, 💘 Crush, 🪿 Goose, 🛠 Aider, 🐉 Qwen Code, 🤲 OpenHands, ⚡ Amp, π Pi, 🦘 Rovo or ♊ Gemini in one keystroke</sub>
+  <sub>Ping 238 models across 25 AI Free providers in real-time </sub><br><sub> Install Free API endpoints to your favorite AI coding tool: <br>📦 OpenCode, 🦞 OpenClaw, 💘 Crush, 🪿 Goose, 🛠 Aider, 🐉 Qwen Code, 🤲 OpenHands, ⚡ Amp, 🔮 Hermes, ▶️ Continue, 🧠 Cline, π Pi, 🦘 Rovo or ♊ Gemini in one keystroke</sub>
 </p>
 
 
@@ -182,6 +182,9 @@ free-coding-models --openclaw --origin groq
 | `--qwen` | 🐉 Qwen Code |
 | `--openhands` | 🤲 OpenHands |
 | `--amp` | ⚡ Amp |
+| `--hermes` | 🔮 Hermes |
+| `--continue` | ▶️ Continue CLI |
+| `--cline` | 🧠 Cline |
 | `--pi` | π Pi |
 | `--rovo` | 🦘 Rovo Dev CLI |
 | `--gemini` | ♊ Gemini CLI |

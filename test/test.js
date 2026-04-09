@@ -1369,6 +1369,9 @@ describe('parseArgs', () => {
       '--qwen',
       '--openhands',
       '--amp',
+      '--hermes',
+      '--continue',
+      '--cline',
       '--pi'
     ))
     assert.equal(result.aiderMode, true)
@@ -1377,6 +1380,9 @@ describe('parseArgs', () => {
     assert.equal(result.qwenMode, true)
     assert.equal(result.openHandsMode, true)
     assert.equal(result.ampMode, true)
+    assert.equal(result.hermesMode, true)
+    assert.equal(result.continueMode, true)
+    assert.equal(result.clineMode, true)
     assert.equal(result.piMode, true)
   })
 
@@ -2355,7 +2361,7 @@ describe('openclaw selected model persistence', () => {
 describe('endpoint install tracking', () => {
   it('exposes only persisted-config install targets in the Y install list', () => {
     const installTargets = getInstallTargetModes()
-    assert.deepEqual(installTargets, ['opencode', 'opencode-desktop', 'openclaw', 'crush', 'goose', 'pi', 'aider', 'qwen', 'openhands', 'amp'])
+    assert.deepEqual(installTargets, ['opencode', 'opencode-desktop', 'openclaw', 'crush', 'goose', 'pi', 'aider', 'qwen', 'openhands', 'amp', 'hermes', 'continue', 'cline'])
   })
 
   it('normalizes tracked installs to canonical shape', () => {

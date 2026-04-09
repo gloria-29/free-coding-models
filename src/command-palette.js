@@ -28,6 +28,9 @@ const TOOL_MODE_DESCRIPTIONS = {
   qwen: 'Launch Qwen Code using the selected provider model.',
   openhands: 'Launch OpenHands with the selected model endpoint.',
   amp: 'Launch Amp with this model as active target.',
+  hermes: 'Launch Hermes Agent with the selected model.',
+  'continue': 'Launch Continue CLI with the selected model.',
+  cline: 'Launch Cline CLI with the selected model.',
   rovo: 'Rovo Dev CLI model (launch with Rovo tool only).',
   gemini: 'Gemini CLI model (launch with Gemini tool only).',
 }

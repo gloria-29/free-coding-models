@@ -17,6 +17,9 @@
  *   📖 Crush: writes crush.json with provider config + models.large/small defaults
  *   📖 Pi: uses --provider/--model CLI flags for guaranteed auto-selection
  *   📖 Aider: writes ~/.aider.conf.yml + passes --model flag
+ *   📖 Hermes: uses `hermes config set` CLI commands + `hermes gateway restart` before launching `hermes chat`
+ *   📖 Continue: writes ~/.continue/config.yaml with provider: openai + apiBase
+ *   📖 Cline: writes ~/.cline/globalState.json with openai-compatible provider config
  *
  * @functions
  *   → `resolveLauncherModelId` — choose the provider-specific id for a launch
@@ -36,7 +39,7 @@ import chalk from 'chalk'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'fs'
 import { homedir } from 'os'
 import { dirname, join } from 'path'
-import { spawn } from 'child_process'
+import { spawn, spawnSync } from 'child_process'
 import { sources } from '../sources.js'
 import { PROVIDER_COLOR } from './render-table.js'
 import { getApiKey } from './config.js'
@@ -73,6 +76,9 @@ function getDefaultToolPaths(homeDir = homedir()) {
     piModelsPath: join(homeDir, '.pi', 'agent', 'models.json'),
     piSettingsPath: join(homeDir, '.pi', 'agent', 'settings.json'),
     openHandsEnvPath: join(homeDir, '.fcm-openhands-env'),
+    hermesConfigPath: join(homeDir, '.hermes', 'config.yaml'),
+    continueConfigPath: join(homeDir, '.continue', 'config.yaml'),
+    clineConfigPath: join(homeDir, '.cline', 'globalState.json'),
   }
 }
 
@@ -401,6 +407,80 @@ function writeRovoConfig(model, configPath = join(homedir(), '.rovodev', 'config
   return { filePath: configPath, backupPath }
 }
 
+// 📖 writeContinueConfig — write ~/.continue/config.yaml with the selected model.
+// 📖 Continue CLI uses YAML config with `provider: openai` for OpenAI-compatible endpoints.
+function writeContinueConfig(model, apiKey, baseUrl, paths = getDefaultToolPaths()) {
+  const filePath = paths.continueConfigPath
+  const backupPath = backupIfExists(filePath)
+  // 📖 Write a minimal config.yaml that Continue CLI can parse directly
+  const content = [
+    '# 📖 Managed by free-coding-models',
+    'name: FCM Config',
+    'version: 0.0.1',
+    'schema: v1',
+    'models:',
+    '  - name: ' + (model.label || model.modelId),
+    '    provider: openai',
+    '    model: ' + model.modelId,
+    ...(baseUrl ? ['    apiBase: ' + baseUrl] : []),
+    ...(apiKey ? ['    apiKey: ' + apiKey] : []),
+    '    roles:',
+    '      - chat',
+    '      - edit',
+    '      - apply',
+    '',
+  ].join('\n')
+  ensureDir(filePath)
+  writeFileSync(filePath, content)
+  return { filePath, backupPath }
+}
+
+// 📖 writeClineConfig — write ~/.cline/globalState.json with the selected model.
+// 📖 Cline CLI stores provider config in globalState.json under apiConfiguration.
+function writeClineConfig(model, apiKey, baseUrl, paths = getDefaultToolPaths()) {
+  const filePath = paths.clineConfigPath
+  const backupPath = backupIfExists(filePath)
+  const config = readJson(filePath, {})
+  // 📖 Set the API provider to "openai-compatible" and configure the endpoint
+  config.apiConfiguration = {
+    ...(config.apiConfiguration || {}),
+    apiProvider: 'openai-compatible',
+    openAiCompatibleApiModelId: model.modelId,
+    ...(baseUrl ? { openAiCompatibleApiBaseUrl: baseUrl } : {}),
+    ...(apiKey ? { openAiCompatibleApiKey: apiKey } : {}),
+  }
+  writeJson(filePath, config)
+  return { filePath, backupPath }
+}
+
+// 📖 writeHermesConfig — configure Hermes Agent via its own `hermes config set` CLI.
+// 📖 This avoids YAML parsing and uses Hermes's native config management.
+// 📖 Sets model name, base_url (OpenAI-compatible endpoint), and api_key.
+function writeHermesConfig(model, apiKey, baseUrl, paths = getDefaultToolPaths()) {
+  const configPath = paths.hermesConfigPath
+  const backupPath = backupIfExists(configPath)
+  const hermesBin = resolveToolBinaryPath('hermes') || 'hermes'
+
+  // 📖 Use `hermes config set` for each field — robust and dependency-free
+  spawnSync(hermesBin, ['config', 'set', 'model', model.modelId], { stdio: 'ignore' })
+  spawnSync(hermesBin, ['config', 'set', 'model.provider', 'custom'], { stdio: 'ignore' })
+  if (baseUrl) {
+    spawnSync(hermesBin, ['config', 'set', 'model.base_url', baseUrl], { stdio: 'ignore' })
+  }
+  if (apiKey) {
+    spawnSync(hermesBin, ['config', 'set', 'model.api_key', apiKey], { stdio: 'ignore' })
+  }
+
+  return { filePath: configPath, backupPath }
+}
+
+// 📖 restartHermesGateway — restart the Hermes messaging gateway after config changes.
+// 📖 Non-blocking: if gateway is not running, this is a no-op.
+function restartHermesGateway() {
+  const hermesBin = resolveToolBinaryPath('hermes') || 'hermes'
+  spawnSync(hermesBin, ['gateway', 'restart'], { stdio: 'ignore', timeout: 10000 })
+}
+
 /**
  * 📖 buildGeminiEnv - Build environment variables for Gemini CLI
  *
@@ -597,6 +677,45 @@ export function prepareExternalToolLaunch(mode, model, config, options = {}) {
     }
   }
 
+  if (mode === 'hermes') {
+    const result = writeHermesConfig(model, apiKey, baseUrl, paths)
+    return {
+      command: 'hermes',
+      args: ['chat'],
+      env,
+      apiKey,
+      baseUrl,
+      meta,
+      configArtifacts: [{ path: result.filePath, backupPath: result.backupPath, label: 'config' }],
+    }
+  }
+
+  if (mode === 'continue') {
+    const result = writeContinueConfig(model, apiKey, baseUrl, paths)
+    return {
+      command: 'cn',
+      args: [],
+      env,
+      apiKey,
+      baseUrl,
+      meta,
+      configArtifacts: [{ path: result.filePath, backupPath: result.backupPath, label: 'config' }],
+    }
+  }
+
+  if (mode === 'cline') {
+    const result = writeClineConfig(model, apiKey, baseUrl, paths)
+    return {
+      command: 'cline',
+      args: [],
+      env,
+      apiKey,
+      baseUrl,
+      meta,
+      configArtifacts: [{ path: result.filePath, backupPath: result.backupPath, label: 'config' }],
+    }
+  }
+
   if (mode === 'rovo') {
     const result = writeRovoConfig(model, join(homedir(), '.rovodev', 'config.yml'), paths)
     console.log(chalk.dim(`  📖 Rovo Dev CLI configured with model: ${model.modelId}`))
@@ -676,6 +795,23 @@ export async function startExternalTool(mode, model, config) {
 
   if (mode === 'pi') {
     // 📖 Pi supports --provider and --model flags for guaranteed auto-selection
+    return spawnCommand(resolveLaunchCommand(mode, launchPlan.command), launchPlan.args, launchPlan.env)
+  }
+
+  if (mode === 'hermes') {
+    // 📖 Restart the Hermes gateway so the new model config takes effect immediately
+    restartHermesGateway()
+    console.log(chalk.dim(`  📖 Hermes Agent configured with model: ${model.modelId}`))
+    return spawnCommand(resolveLaunchCommand(mode, launchPlan.command), launchPlan.args, launchPlan.env)
+  }
+
+  if (mode === 'continue') {
+    console.log(chalk.dim(`  📖 Continue CLI configured with model: ${model.modelId}`))
+    return spawnCommand(resolveLaunchCommand(mode, launchPlan.command), launchPlan.args, launchPlan.env)
+  }
+
+  if (mode === 'cline') {
+    console.log(chalk.dim(`  📖 Cline configured with model: ${model.modelId}`))
     return spawnCommand(resolveLaunchCommand(mode, launchPlan.command), launchPlan.args, launchPlan.env)
   }
 

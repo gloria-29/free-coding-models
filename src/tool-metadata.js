@@ -36,6 +36,9 @@ export const TOOL_METADATA = {
   qwen:              { label: 'Qwen Code',         emoji: '🐉', flag: '--qwen',             color: [255, 213, 128] },
   openhands:         { label: 'OpenHands',         emoji: '🤲', flag: '--openhands',        color: [228, 191, 239] },
   amp:               { label: 'Amp',               emoji: '⚡', flag: '--amp',              color: [255, 232, 98] },
+  hermes:            { label: 'Hermes',            emoji: '🔮', flag: '--hermes',           color: [200, 160, 255] },
+  'continue':        { label: 'Continue CLI',     emoji: '▶️', flag: '--continue',         color: [255, 100, 100] },
+  cline:             { label: 'Cline',             emoji: '🧠', flag: '--cline',            color: [100, 220, 180] },
   rovo:              { label: 'Rovo Dev CLI',      emoji: '🦘', flag: '--rovo',             color: [148, 163, 184], cliOnly: true },
   gemini:            { label: 'Gemini CLI',        emoji: '♊', flag: '--gemini',           color: [66, 165, 245],  cliOnly: true },
 }
@@ -53,6 +56,9 @@ export const COMPAT_COLUMN_SLOTS = [
   { emoji: '🐉', toolKeys: ['qwen'],                         color: [255, 213, 128] },
   { emoji: '🤲', toolKeys: ['openhands'],                    color: [228, 191, 239] },
   { emoji: '⚡', toolKeys: ['amp'],                          color: [255, 232, 98] },
+  { emoji: '🔮', toolKeys: ['hermes'],                       color: [200, 160, 255] },
+  { emoji: '▶️', toolKeys: ['continue'],                     color: [255, 100, 100] },
+  { emoji: '🧠', toolKeys: ['cline'],                        color: [100, 220, 180] },
   { emoji: '🦘', toolKeys: ['rovo'],                         color: [148, 163, 184] },
   { emoji: '♊', toolKeys: ['gemini'],                       color: [66, 165, 245] },
 ]
@@ -68,6 +74,9 @@ export const TOOL_MODE_ORDER = [
   'qwen',
   'openhands',
   'amp',
+  'hermes',
+  'continue',
+  'cline',
   'rovo',
   'gemini',
 ]

@@ -228,6 +228,40 @@ export const TOOL_BOOTSTRAP_METADATA = {
       },
     },
   },
+  'continue': {
+    binary: 'cn',
+    docsUrl: 'https://docs.continue.dev/cli/overview',
+    install: {
+      default: {
+        shellCommand: 'npm install -g @continuedev/cli',
+        summary: 'Install Continue CLI globally via npm.',
+      },
+    },
+  },
+  cline: {
+    binary: 'cline',
+    docsUrl: 'https://docs.cline.bot/cline-cli/overview',
+    install: {
+      default: {
+        shellCommand: 'npm install -g cline',
+        summary: 'Install Cline CLI globally via npm.',
+      },
+    },
+  },
+  hermes: {
+    binary: 'hermes',
+    docsUrl: 'https://github.com/NousResearch/hermes-agent',
+    install: {
+      default: {
+        shellCommand: 'curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash',
+        summary: 'Install Hermes Agent via the official Nous Research installer.',
+        note: 'Hermes requires Python 3.11+ and git. The installer handles everything else automatically.',
+      },
+    },
+    installUnsupported: {
+      win32: 'Hermes Agent does not support native Windows. Use WSL2 instead.',
+    },
+  },
   gemini: {
     binary: 'gemini',
     docsUrl: 'https://github.com/google-gemini/gemini-cli',
