@@ -1,6 +1,12 @@
 # Changelog
 ---
 
+## [0.3.39] - 2026-04-09
+
+### Fixed
+- **🔧 CI/CD** — Switched GitHub Actions from `npm ci` to `pnpm install --frozen-lockfile` (release + security-audit workflows)
+- Removed obsolete `package-lock.json` that was causing `EUSAGE` sync errors in CI
+
 ## [0.3.38] - 2026-04-09
 
 ### Added

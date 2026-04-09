@@ -20,15 +20,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'pnpm'
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
       # 📖 Check for known vulnerabilities in dependencies
-      - name: npm audit
-        run: npm audit --audit-level=moderate || true
+      - name: pnpm audit
+        run: pnpm audit --audit-level=moderate || true
 
   lockfile-lint:
     runs-on: ubuntu-latest
