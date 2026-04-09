@@ -1,6 +1,11 @@
 # Changelog
 ---
 
+## [0.3.40] - 2026-04-09
+
+### Fixed
+- **🔧 CI/CD** — Added `packageManager` field to `package.json` so `pnpm/action-setup@v4` can resolve the pnpm version
+
 ## [0.3.39] - 2026-04-09
 
 ### Fixed
