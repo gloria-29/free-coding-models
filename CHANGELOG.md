@@ -1,7 +1,7 @@
 # Changelog
 ---
 
-## [0.3.37] - 2026-04-09
+## [0.3.38] - 2026-04-09
 
 ### Added
 - **🔮 Hermes Agent** — Configures Hermes via `hermes config set`, restarts the gateway, and launches `hermes chat`. Supports all OpenAI-compatible providers.
