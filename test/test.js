@@ -1505,6 +1505,10 @@ describe('package.json sanity', () => {
     assert.ok(pkg.engines?.node, 'engines.node should be set')
     assert.match(pkg.engines.node, /18/)
   })
+
+  it('builds the web dashboard during prepack so npm releases include web/dist', () => {
+    assert.equal(pkg.scripts?.prepack, 'npm run build:web')
+  })
 })
 
 describe('CLI entry point sanity', () => {

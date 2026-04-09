@@ -1,10 +1,12 @@
 # Changelog
 ---
 
-## [0.3.41] - 2026-04-09
+## [0.3.42] - 2026-04-09
 
 ### Added
-- Added support for Xcode Intelligence (Xcode 26.3+) via the `--xcode` flag and manual configuration flow. The tool provides clear setup instructions and launches Xcode directly.
-- The `xcode` launcher mode has been registered in the tool metadata, enabling Xcode selection through the command palette, `Z` cycle, and CLI arguments.
-- Users can now use Xcode Intelligence with any of the 230+ supported OpenAI-compatible API endpoints.
-- Compatibility logic ensures Xcode mode accurately highlights supported models (compatible with all standard models).
+- Added a Star History section to the README so users can quickly see project growth and adoption over time.
+
+### Fixed
+- Xcode Intelligence bootstrap detection now recognizes `xcodebuild`, so the launcher can detect a valid local Xcode install instead of treating the tool as missing.
+- `free-coding-models --web` now checks whether port `3333` already belongs to another app and automatically starts on the next free local port instead of sending users to a misleading `Not Found` page.
+- npm releases now build the web dashboard during `prepack`, so published installs include `web/dist` and the web UI actually loads after install instead of starting a server with no bundled frontend.
