@@ -11,6 +11,10 @@
  *   📖 Key I opens the unified "Feedback, bugs & requests" overlay.
  *
  *   It also owns the "test key" model selection used by the Settings overlay.
+ *   Anonymous telemetry hooks for model launches and a few high-signal settings
+ *   actions live here too, because this module already sees the final effective
+ *   tool mode, provider, and selected model right before the app hands control
+ *   to an external CLI.
  *   Some providers expose models in `/v1/models` that are not actually callable
  *   on the chat-completions endpoint. To avoid false negatives when a user
  *   presses `T` in Settings, the helpers below discover candidate model IDs,
@@ -195,6 +199,7 @@ export function createKeyHandler(ctx) {
     getToolInstallPlan,
     isToolInstalled,
     installToolWithPlan,
+    sendUsageTelemetry,
     startRecommendAnalysis,
     stopRecommendAnalysis,
     sendBugReport,
@@ -232,6 +237,56 @@ export function createKeyHandler(ctx) {
     return mode !== 'opencode-desktop'
   }
 
+  function getModelTelemetryFamily(providerKey) {
+    if (providerKey === 'rovo' || providerKey === 'gemini' || providerKey === 'opencode-zen') return providerKey
+    return 'standard'
+  }
+
+  function trackTelemetryEvent(event, properties = {}) {
+    if (typeof sendUsageTelemetry !== 'function') return
+    void sendUsageTelemetry(state.config, cliArgs, {
+      event,
+      mode: state.mode,
+      ts: new Date().toISOString(),
+      properties: {
+        session_id: state.sessionId,
+        event_version: 1,
+        ...properties,
+      },
+    })
+  }
+
+  function buildModelLaunchTelemetry(selected, extra = {}) {
+    return {
+      action_type: 'launch_model',
+      tool_mode: state.mode,
+      provider_key: selected.providerKey,
+      model_id: selected.modelId,
+      model_label: selected.label,
+      model_tier: selected.tier,
+      model_family: getModelTelemetryFamily(selected.providerKey),
+      ...extra,
+    }
+  }
+
+  function trackAppUse(selected, extra = {}) {
+    trackTelemetryEvent('app_use', buildModelLaunchTelemetry(selected, extra))
+  }
+
+  function trackAppUseResult(selected, launchResult, extra = {}) {
+    trackTelemetryEvent('app_use_result', buildModelLaunchTelemetry(selected, {
+      launch_result: launchResult,
+      ...extra,
+    }))
+  }
+
+  function trackAppAction(actionType, properties = {}) {
+    trackTelemetryEvent('app_action', {
+      action_type: actionType,
+      ...properties,
+    })
+  }
+
   async function launchSelectedModel(selected, options = {}) {
     const { uiAlreadyStopped = false } = options
     userSelected = { modelId: selected.modelId, label: selected.label, tier: selected.tier, providerKey: selected.providerKey }
@@ -264,6 +319,9 @@ export function createKeyHandler(ctx) {
 
     // 📖 Case A: User is in Rovo/Gemini mode but selected a model from a different provider
     if (isActiveModeCliOnly && !modelBelongsToActiveMode) {
+      trackAppUseResult(selected, 'blocked_incompatible_model', {
+        blocked_by_tool_mode: state.mode,
+      })
       const availableModels = MODELS.filter(m => m[5] === state.mode)
       console.log(chalk.yellow(`  ⚠ ${activeMeta.label} can only launch its own models.`))
       console.log(chalk.yellow(`  "${selected.label}" is not a ${activeMeta.label} model.`))
@@ -331,6 +389,9 @@ export function createKeyHandler(ctx) {
 
         const installResult = await installToolWithPlan(installPlan)
         if (!installResult.ok) {
+          trackAppUseResult(selected, 'blocked_missing_tool', {
+            required_tool_mode: toolModeForProvider,
+          })
           console.log(chalk.red(`  X Tool installation failed with exit code ${installResult.exitCode}.`))
           if (installPlan.docsUrl) console.log(chalk.dim(`  Docs: ${installPlan.docsUrl}`))
           console.log()
@@ -339,6 +400,9 @@ export function createKeyHandler(ctx) {
 
         // 📖 Verify tool is now installed
         if (!isToolInstalled(toolModeForProvider)) {
+          trackAppUseResult(selected, 'blocked_missing_tool', {
+            required_tool_mode: toolModeForProvider,
+          })
           console.log(chalk.yellow('  ⚠ The installer finished, but the tool is still not reachable from this terminal session.'))
           console.log(chalk.dim('  Restart your shell or add the tool bin directory to PATH, then retry the launch.'))
           if (installPlan.docsUrl) console.log(chalk.dim(`  Docs: ${installPlan.docsUrl}`))
@@ -350,6 +414,10 @@ export function createKeyHandler(ctx) {
         console.log()
       }
     }
+
+    const launchSource = uiAlreadyStopped ? 'tool_install_retry' : 'tui_enter'
+    trackAppUse(selected, { launch_source: launchSource })
+    trackAppUseResult(selected, 'started', { launch_source: launchSource })
 
     let exitCode = 0
     if (state.mode === 'openclaw') {
@@ -377,6 +445,9 @@ export function createKeyHandler(ctx) {
 
     const installResult = await installToolWithPlan(currentPlan)
     if (!installResult.ok) {
+      trackAppUseResult(selected, 'blocked_missing_tool', {
+        required_tool_mode: state.mode,
+      })
       console.log(chalk.red(`  X Tool installation failed with exit code ${installResult.exitCode}.`))
       if (currentPlan?.docsUrl) console.log(chalk.dim(`  Docs: ${currentPlan.docsUrl}`))
       console.log()
@@ -384,6 +455,9 @@ export function createKeyHandler(ctx) {
     }
 
     if (shouldCheckMissingTool(state.mode) && !isToolInstalled(state.mode)) {
+      trackAppUseResult(selected, 'blocked_missing_tool', {
+        required_tool_mode: state.mode,
+      })
       console.log(chalk.yellow('  ⚠ The installer finished, but the tool is still not reachable from this terminal session.'))
       console.log(chalk.dim('  Restart your shell or add the tool bin directory to PATH, then retry the launch.'))
       if (currentPlan?.docsUrl) console.log(chalk.dim(`  Docs: ${currentPlan.docsUrl}`))
@@ -565,6 +639,9 @@ export function createKeyHandler(ctx) {
     } else {
       removeShellEnv()
     }
+    trackAppAction('shell_env_export_toggled', {
+      enabled: state.config.settings.shellEnvEnabled === true,
+    })
   }
 
   function resetInstallEndpointsOverlay() {
@@ -605,6 +682,14 @@ export function createKeyHandler(ctx) {
         ...(result.extraPath ? [chalk.bold(`Secrets:`) + ` ${result.extraPath}`] : []),
       ],
     }
+    trackAppAction('install_provider_endpoints', {
+      provider_key: result.providerKey,
+      tool_mode: result.toolMode,
+      install_scope: result.scope,
+      connection_mode: state.installEndpointsConnectionMode || 'direct',
+      model_count: result.modelCount,
+      selected_model_count: selectedModelIds.length,
+    })
     state.installEndpointsPhase = 'result'
     state.installEndpointsCursor = 0
     state.installEndpointsScrollOffset = 0
@@ -1880,6 +1965,11 @@ export function createKeyHandler(ctx) {
             if (!saveResult.success) {
               state.settingsErrorMsg = `⚠️  Failed to persist ${pk} API key: ${saveResult.error || 'Unknown error'}`
               setTimeout(() => { state.settingsErrorMsg = null }, 4000)
+            } else {
+              trackAppAction('api_key_saved', {
+                provider_key: pk,
+                key_action: state.settingsAddKeyMode ? 'add' : 'replace',
+              })
             }
           }
           state.settingsEditMode = false
@@ -2111,6 +2201,10 @@ export function createKeyHandler(ctx) {
             ? `✅ Removed one key for ${pk} (${remaining} remaining)`
             : `✅ Removed last API key for ${pk}`
           state.settingsSyncStatus = { type: 'success', msg }
+          trackAppAction('api_key_removed', {
+            provider_key: pk,
+            remaining_key_count: remaining,
+          })
         }
         return
       }

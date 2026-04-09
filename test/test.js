@@ -89,6 +89,7 @@ import {
   filterCommandPaletteEntries,
 } from '../src/command-palette.js'
 import { startWebServer, inspectExistingWebServer } from '../web/server.js'
+import { buildTelemetryProperties, sendUsageTelemetry } from '../src/telemetry.js'
 
 // ─── Helper: create a mock model result ──────────────────────────────────────
 // 📖 Builds a minimal result object matching the shape used by the main script
@@ -1465,6 +1466,128 @@ describe('cli help text', () => {
 
     for (const entry of expectedEntries) {
       assert.match(help, new RegExp(entry.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    }
+  })
+})
+
+describe('telemetry', () => {
+  it('builds telemetry properties with custom launch metadata', () => {
+    const properties = buildTelemetryProperties({
+      mode: 'openclaw',
+      properties: {
+        session_id: 'session_test',
+        tool_mode: 'openclaw',
+        provider_key: 'nvidia',
+        model_id: 'deepseek-ai/deepseek-v3.2',
+        action_type: 'launch_model',
+        ignored: undefined,
+      },
+    })
+
+    assert.equal(properties.app, 'free-coding-models')
+    assert.equal(properties.mode, 'openclaw')
+    assert.equal(properties.session_id, 'session_test')
+    assert.equal(properties.tool_mode, 'openclaw')
+    assert.equal(properties.provider_key, 'nvidia')
+    assert.equal(properties.model_id, 'deepseek-ai/deepseek-v3.2')
+    assert.equal(properties.action_type, 'launch_model')
+    assert.equal('ignored' in properties, false)
+  })
+
+  it('sends app_start and app_use with the same distinct_id and session_id', async () => {
+    const originalFetch = global.fetch
+    const calls = []
+    global.fetch = async (url, options) => {
+      calls.push({ url, options })
+      return { ok: true }
+    }
+
+    try {
+      const config = {
+        telemetry: {
+          enabled: true,
+          anonymousId: 'anon_test_user',
+        },
+      }
+      const cliArgs = { noTelemetry: false }
+
+      await sendUsageTelemetry(config, cliArgs, {
+        event: 'app_start',
+        mode: 'opencode',
+        properties: {
+          session_id: 'session_test_user',
+          event_version: 1,
+        },
+      })
+
+      await sendUsageTelemetry(config, cliArgs, {
+        event: 'app_use',
+        mode: 'openclaw',
+        properties: {
+          session_id: 'session_test_user',
+          event_version: 1,
+          action_type: 'launch_model',
+          tool_mode: 'openclaw',
+          provider_key: 'nvidia',
+          model_id: 'deepseek-ai/deepseek-v3.2',
+          model_label: 'DeepSeek V3.2',
+          model_tier: 'S+',
+        },
+      })
+
+      assert.equal(calls.length, 2)
+      const [startBody, useBody] = calls.map(({ options }) => JSON.parse(options.body))
+      assert.equal(startBody.event, 'app_start')
+      assert.equal(useBody.event, 'app_use')
+      assert.equal(startBody.distinct_id, 'anon_test_user')
+      assert.equal(useBody.distinct_id, 'anon_test_user')
+      assert.equal(startBody.properties.session_id, 'session_test_user')
+      assert.equal(useBody.properties.session_id, 'session_test_user')
+      assert.equal(useBody.properties.tool_mode, 'openclaw')
+      assert.equal(useBody.properties.provider_key, 'nvidia')
+      assert.equal(useBody.properties.model_id, 'deepseek-ai/deepseek-v3.2')
+      assert.equal(useBody.properties.model_label, 'DeepSeek V3.2')
+      assert.equal(useBody.properties.model_tier, 'S+')
+    } finally {
+      global.fetch = originalFetch
+    }
+  })
+
+  it('does not send telemetry when disabled via CLI flag or env var', async () => {
+    const originalFetch = global.fetch
+    const originalTelemetryEnv = process.env.FREE_CODING_MODELS_TELEMETRY
+    const calls = []
+    global.fetch = async (url, options) => {
+      calls.push({ url, options })
+      return { ok: true }
+    }
+
+    try {
+      const config = {
+        telemetry: {
+          enabled: true,
+          anonymousId: 'anon_opt_out',
+        },
+      }
+
+      await sendUsageTelemetry(config, { noTelemetry: true }, {
+        event: 'app_use',
+        mode: 'opencode',
+        properties: { session_id: 'session_cli_opt_out' },
+      })
+
+      process.env.FREE_CODING_MODELS_TELEMETRY = '0'
+      await sendUsageTelemetry(config, { noTelemetry: false }, {
+        event: 'app_action',
+        mode: 'opencode',
+        properties: { session_id: 'session_env_opt_out', action_type: 'api_key_saved' },
+      })
+
+      assert.equal(calls.length, 0)
+    } finally {
+      global.fetch = originalFetch
+      if (originalTelemetryEnv === undefined) delete process.env.FREE_CODING_MODELS_TELEMETRY
+      else process.env.FREE_CODING_MODELS_TELEMETRY = originalTelemetryEnv
     }
   })
 })

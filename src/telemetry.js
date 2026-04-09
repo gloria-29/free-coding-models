@@ -7,7 +7,8 @@
  *   All telemetry is strictly opt-in-by-default, fire-and-forget, and anonymous:
  *   - A stable `anonymousId` (UUID prefixed with "anon_") is generated once and stored
  *     in ~/.free-coding-models.json.  No personal data is ever collected.
- *   - PostHog is used for product analytics (app_start events, mode, platform).
+ *   - PostHog is used for product analytics (`app_start`, `app_use`, and lightweight
+ *     `app_action` events covering launches and key product actions).
  *   - Discord webhooks carry anonymous feature requests (J key) and bug reports (I key).
  *   - `isTelemetryEnabled()` checks: CLI flag → env var → default (enabled).
  *   - `telemetryDebug()` writes to stderr only when FREE_CODING_MODELS_TELEMETRY_DEBUG=1.
@@ -29,6 +30,7 @@
  *   → getTelemetrySystem()                        — Convert platform to human label
  *   → getTelemetryTerminal()                      — Infer terminal family from env hints
  *   → isTelemetryEnabled(config, cliArgs)         — Resolve effective enabled state
+ *   → buildTelemetryProperties(payload)           — Build sanitized PostHog event properties
  *   → sendUsageTelemetry(config, cliArgs, payload)— Fire-and-forget PostHog ping
  *   → sendFeatureRequest(message)                 — Post anonymous feature request to Discord
  *   → sendBugReport(message)                      — Post anonymous bug report to Discord
@@ -37,7 +39,7 @@
  *   parseTelemetryEnv, isTelemetryDebugEnabled, telemetryDebug,
  *   ensureTelemetryConfig, getTelemetryDistinctId,
  *   getTelemetrySystem, getTelemetryTerminal,
- *   isTelemetryEnabled, sendUsageTelemetry,
+ *   isTelemetryEnabled, buildTelemetryProperties, sendUsageTelemetry,
  *   sendFeatureRequest, sendBugReport
  *
  * @see src/config.js  — saveConfig is imported here to persist the generated anonymousId
@@ -206,10 +208,36 @@ export function isTelemetryEnabled(config, cliArgs) {
 }
 
 /**
+ * 📖 Build the final analytics properties object while keeping the base schema
+ * 📖 stable and stripping undefined values from optional action-specific fields.
+ * @param {{ version?: string, mode?: string, properties?: Record<string, unknown> } | undefined} payload
+ * @returns {Record<string, unknown>}
+ */
+export function buildTelemetryProperties(payload) {
+  const extraProperties = payload?.properties && typeof payload.properties === 'object' && !Array.isArray(payload.properties)
+    ? payload.properties
+    : {}
+
+  const merged = {
+    ...extraProperties,
+    $process_person_profile: false,
+    source: 'cli',
+    app: 'free-coding-models',
+    version: payload?.version || LOCAL_VERSION,
+    app_version: payload?.version || LOCAL_VERSION,
+    mode: payload?.mode || 'opencode',
+    system: getTelemetrySystem(),
+    terminal: getTelemetryTerminal(),
+  }
+
+  return Object.fromEntries(Object.entries(merged).filter(([, value]) => value !== undefined))
+}
+
+/**
  * 📖 Fire-and-forget analytics ping: never blocks UX, never throws.
  * @param {Record<string, unknown>} config
  * @param {{ noTelemetry?: boolean }} cliArgs
- * @param {{ event?: string, version?: string, mode?: string, ts?: string }} payload
+ * @param {{ event?: string, version?: string, mode?: string, ts?: string, properties?: Record<string, unknown> }} payload
  */
 export async function sendUsageTelemetry(config, cliArgs, payload) {
   if (!isTelemetryEnabled(config, cliArgs)) {
@@ -256,16 +284,7 @@ export async function sendUsageTelemetry(config, cliArgs, payload) {
       event: payload?.event || 'app_start',
       distinct_id: distinctId,
       timestamp,
-      properties: {
-        $process_person_profile: false,
-        source: 'cli',
-        app: 'free-coding-models',
-        version: payload?.version || LOCAL_VERSION,
-        app_version: payload?.version || LOCAL_VERSION,
-        mode: payload?.mode || 'opencode',
-        system: getTelemetrySystem(),
-        terminal: getTelemetryTerminal(),
-      },
+      properties: buildTelemetryProperties(payload),
     }
 
     await fetch(endpoint, {

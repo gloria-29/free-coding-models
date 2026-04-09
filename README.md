@@ -374,7 +374,7 @@ For every model in this tool, **you own the generated output** — code, text, o
 
 `free-coding-models` collects anonymous usage telemetry to help understand how the CLI is used and improve the product. No personal information, API keys, prompts, source code, file paths, or secrets are ever collected.
 
-The telemetry payload is limited to anonymous product analytics such as the app version, selected mode, operating system, terminal family, and a random anonymous install ID stored locally on your machine.
+The telemetry payload is limited to anonymous product analytics such as the app version, selected tool mode, operating system, terminal family, and a random anonymous install ID stored locally on your machine. When a model is launched, telemetry can also include the selected tool, provider, model ID, model label, model tier, launch result, and a few product actions such as installing provider catalogs, saving/removing API keys, or toggling shell environment export.
 
 Telemetry is enabled by default and can be disabled with any of the following:
 

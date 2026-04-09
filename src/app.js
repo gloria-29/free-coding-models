@@ -32,7 +32,7 @@
  *   - `getTelemetryDistinctId`: Generate/reuse a stable anonymous ID for telemetry
  *   - `getTelemetryTerminal`: Infer terminal family (Terminal.app, iTerm2, kitty, etc.)
  *   - `isTelemetryDebugEnabled` / `telemetryDebug`: Optional runtime telemetry diagnostics via env
- *   - `sendUsageTelemetry`: Fire-and-forget anonymous app-start event
+ *   - `sendUsageTelemetry`: Fire-and-forget anonymous app-start, launch, and action events
  *   - `ensureFavoritesConfig` / `toggleFavoriteModel`: Persist and toggle pinned favorites
  *   - `promptApiKey`: Interactive wizard for first-time multi-provider API key setup
  *   - `buildPingRequest` / `ping`: Build provider-specific probe requests and measure latency
@@ -271,6 +271,8 @@ export async function runApp(cliArgs, config) {
   })
   if (requestedMode) mode = requestedMode
 
+  const sessionId = `session_${randomUUID()}`
+
   // 📖 Track app opening early so fast exits are still counted.
   // 📖 Must run before update checks because npm registry lookups can add startup delay.
   void sendUsageTelemetry(config, cliArgs, {
@@ -278,6 +280,10 @@ export async function runApp(cliArgs, config) {
     version: LOCAL_VERSION,
     mode,
     ts: new Date().toISOString(),
+    properties: {
+      session_id: sessionId,
+      event_version: 1,
+    },
   })
 
   // 📖 Auto-update detection: check npm registry for new versions at startup.
@@ -438,6 +444,7 @@ export async function runApp(cliArgs, config) {
     settingsUpdateLatestVersion: null, // 📖 Latest npm version discovered from manual check
     settingsUpdateError: null,    // 📖 Last update-check error message for maintenance row
     config,                       // 📖 Live reference to the config object (updated on save)
+    sessionId,                    // 📖 Per-process analytics link between app_start and later app_use/app_action events.
     visibleSorted: [],            // 📖 Cached visible+sorted models — shared between render loop and key handlers
     commandPaletteOpen: false,    // 📖 Whether the Ctrl+P command palette overlay is active.
     commandPaletteQuery: '',      // 📖 Current command palette search query.
@@ -863,6 +870,7 @@ export async function runApp(cliArgs, config) {
     getToolInstallPlan,
     isToolInstalled,
     installToolWithPlan,
+    sendUsageTelemetry,
     startRecommendAnalysis: overlays.startRecommendAnalysis,
     stopRecommendAnalysis: overlays.stopRecommendAnalysis,
     sendBugReport,

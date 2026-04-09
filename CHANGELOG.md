@@ -1,9 +1,13 @@
-## [0.3.42] - 2026-04-09
+## [0.3.43] - 2026-04-09
 
 ### Added
-- Added a Star History section to the README so users can quickly see project growth and adoption over time.
+- Added new anonymous telemetry events for real product usage: `app_use` records which tool, provider, and model users actually launch, while `app_action` tracks a small set of high-signal in-app actions such as endpoint installs, API key save/remove flows, and shell env export toggles.
+- Added per-session telemetry linking with a generated `session_id`, so `app_start`, `app_use`, and action events can be analyzed together while still keeping users anonymous through the existing persistent install-scoped `distinct_id`.
+- Added launch outcome tracking with `app_use_result`, so the dashboard can distinguish successful launches from blocked flows like incompatible model/tool combinations or missing CLI installs.
+
+### Changed
+- Extended the telemetry pipeline to support custom event properties on top of the shared anonymous metadata (`app`, `version`, `mode`, `system`, `terminal`) without introducing a second analytics path.
+- Updated the README telemetry section to explain that anonymous analytics now cover launched tool/provider/model metadata and a few product actions, while still explicitly excluding prompts, source code, file paths, API keys, and secrets.
 
 ### Fixed
-- **Xcode Detection:** Xcode Intelligence bootstrap detection now recognizes `xcodebuild`, so the launcher can detect a valid local Xcode install instead of incorrectly treating the tool as missing on macOS machines.
-- `free-coding-models --web` now checks whether port `3333` already belongs to another app and automatically starts on the next free local port instead of sending users to a misleading `Not Found` page.
-- npm releases now build the web dashboard during `prepack`, so published installs include `web/dist` and the web UI actually loads after install instead of starting a server with no bundled frontend.
+- Added regression coverage for telemetry opt-out behavior and event payload shape, ensuring the new launch/action events stay disabled under `--no-telemetry` or `FREE_CODING_MODELS_TELEMETRY=0`.
