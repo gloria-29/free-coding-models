@@ -2465,8 +2465,8 @@ describe('tool launch preparation', () => {
       const piModels = JSON.parse(readFileSync(paths.piModelsPath, 'utf8'))
       const piSettings = JSON.parse(readFileSync(paths.piSettingsPath, 'utf8'))
       assert.equal(piPlan.command, 'pi')
-      assert.deepEqual(piPlan.args, ['--provider', 'freeCodingModels', '--model', 'deepseek-ai/deepseek-v3.2', '--api-key', piPlan.apiKey])
-      assert.equal(piModels.providers.freeCodingModels.models[0].id, 'deepseek-ai/deepseek-v3.2')
+      assert.deepEqual(piPlan.args, ['--provider', 'nvidia', '--model', 'deepseek-ai/deepseek-v3.2', '--api-key', piPlan.apiKey])
+      assert.equal(piModels.providers.nvidia.models[0].id, 'deepseek-ai/deepseek-v3.2')
       assert.equal(piSettings.defaultModel, 'deepseek-ai/deepseek-v3.2')
     } finally {
       rmSync(dir, { recursive: true, force: true })

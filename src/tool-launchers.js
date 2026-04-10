@@ -272,7 +272,7 @@ function writePiConfig(model, apiKey, baseUrl, paths = getDefaultToolPaths()) {
   const modelsBackupPath = backupIfExists(modelsFilePath)
   const modelsConfig = readJson(modelsFilePath, { providers: {} })
   if (!modelsConfig.providers || typeof modelsConfig.providers !== 'object') modelsConfig.providers = {}
-  modelsConfig.providers.freeCodingModels = {
+  modelsConfig.providers[model.providerKey] = {
     baseUrl,
     api: 'openai-completions',
     apiKey,
@@ -284,7 +284,7 @@ function writePiConfig(model, apiKey, baseUrl, paths = getDefaultToolPaths()) {
   const settingsFilePath = paths.piSettingsPath
   const settingsBackupPath = backupIfExists(settingsFilePath)
   const settingsConfig = readJson(settingsFilePath, {})
-  settingsConfig.defaultProvider = 'freeCodingModels'
+  settingsConfig.defaultProvider = model.providerKey
   settingsConfig.defaultModel = model.modelId
   writeJson(settingsFilePath, settingsConfig)
 
@@ -667,7 +667,7 @@ export function prepareExternalToolLaunch(mode, model, config, options = {}) {
     const result = writePiConfig(model, apiKey, baseUrl, paths)
     return {
       command: 'pi',
-      args: ['--provider', 'freeCodingModels', '--model', model.modelId, '--api-key', apiKey],
+      args: ['--provider', model.providerKey, '--model', model.modelId, '--api-key', apiKey],
       env,
       apiKey,
       baseUrl,
@@ -759,10 +759,10 @@ export function prepareExternalToolLaunch(mode, model, config, options = {}) {
   }
 
   if (mode === 'jcode') {
-    console.log(chalk.dim(`  📖 jcode will use model: ${model.modelId}`))
+    console.log(chalk.dim(`  📖 jcode will use provider: ${model.providerKey} / model: ${model.modelId}`))
     return {
       command: 'jcode',
-      args: ['run', `"say hello"`],
+      args: ['run', '--provider', model.providerKey, '--model', model.modelId, '--api-key', apiKey],
       env,
       apiKey,
       baseUrl,

@@ -33,6 +33,8 @@ import { installProviderEndpoints } from './endpoint-installer.js'
 import { ENV_VAR_NAMES } from './provider-metadata.js'
 import { PROVIDER_COLOR } from './render-table.js'
 import { resolveToolBinaryPath } from './tool-bootstrap.js'
+import { getApiKey } from './config.js'
+import { syncShellEnv } from './shell-env.js'
 
 const OPENCLAW_CONFIG = join(homedir(), '.openclaw', 'openclaw.json')
 
@@ -56,7 +58,14 @@ export function saveOpenClawConfig(config, options = {}) {
   writeFileSync(filePath, JSON.stringify(config, null, 2))
 }
 
-function spawnOpenClawCli() {
+/**
+ * 📖 Spawn OpenClaw CLI with proper environment including API key.
+ * OpenClaw reads API keys from environment variables at runtime, not just config file.
+ *
+ * @param {NodeJS.ProcessEnv} env - Environment variables including API key
+ * @returns {Promise<number>} Exit code
+ */
+function spawnOpenClawCli(env = process.env) {
   return new Promise(async (resolve, reject) => {
     const { spawn } = await import('child_process')
     const command = resolveToolBinaryPath('openclaw') || 'openclaw'
@@ -64,7 +73,7 @@ function spawnOpenClawCli() {
       stdio: 'inherit',
       shell: false,
       detached: false,
-      env: process.env,
+      env,
     })
 
     child.on('exit', (code) => resolve(typeof code === 'number' ? code : 0))
@@ -107,16 +116,29 @@ export async function startOpenClaw(model, config, options = {}) {
     })
 
     const providerEnvName = ENV_VAR_NAMES[model.providerKey]
+    const apiKey = getApiKey(config, model.providerKey)
     console.log(chalk.rgb(255, 140, 0)(`  ✓ Default model set to: ${result.primaryModelRef || `${result.providerId}/${model.modelId}`}`))
     console.log()
     console.log(chalk.dim(`  📄 Config updated: ${result.path}`))
     if (result.backupPath) console.log(chalk.dim(`  💾 Backup: ${result.backupPath}`))
     if (providerEnvName) console.log(chalk.dim(`  🔑 API key synced under config env.${providerEnvName}`))
     console.log()
+
     if (options.launchCli) {
+      // 📖 Sync shell env so API key is available as environment variable
+      if (config.settings?.shellEnvEnabled !== false) {
+        syncShellEnv(config)
+      }
+
+      // 📖 Build env with API key so OpenClaw can authenticate
+      const launchEnv = { ...process.env }
+      if (apiKey && providerEnvName) {
+        launchEnv[providerEnvName] = apiKey
+      }
+
       console.log(chalk.dim('  Starting OpenClaw...'))
       console.log()
-      await spawnOpenClawCli()
+      await spawnOpenClawCli(launchEnv)
     } else {
       console.log(chalk.dim('  💡 OpenClaw will reload config automatically when it notices the file change.'))
       console.log(chalk.dim(`     To apply manually: openclaw models set ${result.primaryModelRef || `${result.providerId}/${model.modelId}`}`))
