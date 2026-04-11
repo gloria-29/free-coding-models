@@ -2408,9 +2408,8 @@ export function createKeyHandler(ctx) {
       return
     }
 
-    // 📖 Alt+W: toggle footer visibility (collapse to single hint when hidden)
-    // 📖 Note: readline doesn't set key.alt=true for ALT combos; detect via str starting with \x1b (ESC)
-    if (key.name === 'w' && str && str.startsWith('\x1b') && !key.ctrl && !key.meta) {
+    // 📖 Ctrl+O: toggle footer visibility (collapse to single hint when hidden)
+    if (key.ctrl && key.name === 'o' && !key.meta) {
       state.footerHidden = !state.footerHidden
       if (!state.config.settings || typeof state.config.settings !== 'object') state.config.settings = {}
       state.config.settings.footerHidden = state.footerHidden

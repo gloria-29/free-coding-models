@@ -881,7 +881,7 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   if (footerHidden) {
     // 📖 Collapsed footer: single line with toggle hint
     lines.push(
-      '  ' + themeColors.hotkey('Alt+W') + themeColors.dim(' Toggle Footer') +
+      '  ' + themeColors.hotkey('Ctrl+O') + themeColors.dim(' Toggle Footer') +
       themeColors.dim('  •  Ctrl+C Exit')
     )
   } else {

@@ -1,41 +1,37 @@
-## [0.3.50] - 2026-04-11
+## [0.3.51] - 2026-04-11
 
 ### Changed
 
-- **Providers reordered by generosity of free tier** — All 25 providers are now sorted from most generous to least generous in the README, TUI Settings page, and `D` key filter cycling. No more hunting for the best free option.
+- **NVIDIA NIM moved to #1** — Now listed first in README, TUI Settings page, and `D` key filter cycling (per user request). Provider order across all surfaces is now: NVIDIA NIM → Groq → Cerebras → Google AI Studio → Cloudflare → ... → iFlow.
 
-- **Free tier limits corrected across all providers** — Verified and corrected free tier limits for every provider using live web research. Key corrections:
-  - **Groq**: 30 RPM, 1K-14.4K req/day (previously listed as "30-50 RPM per model")
-  - **Google AI Studio**: 15-60 RPM, 250-1.5K req/day (previously listed as "14.4K req/day, 30/min")
-  - **Together AI**: ❌ **No free tier** — requires $5 minimum purchase. Removed from the "free" recommendation.
-  - **iFlow**: ⚠️ **Shutting down April 17, 2026** — marked with warning in README and sources.js
+### Added
 
-- **README subtitle updated** — Now says "ranked by generosity of free tier (most generous first)" instead of "ranked by SWE-bench"
+- **Provider generosity ranking** — README subtitle now includes "ranked by free tier generosity" and the full 25-provider ranking table. This reflects the same order used in the TUI Settings screen and `D` key cycling.
 
-### Provider generosity ranking (most generous first)
+### Provider order (as shown in TUI and README)
 
-1. Groq (30 RPM, 1K-14.4K req/day)
-2. Cerebras (1M tokens/day)
-3. Google AI Studio (15-60 RPM, 250-1.5K req/day)
-4. NVIDIA NIM (~40 RPM)
-5. Cloudflare Workers AI (10K neurons/day)
-6. OpenRouter (50 req/day free)
-7. DeepInfra (200 concurrent requests)
-8. HuggingFace (~$0.10/month)
-9. Perplexity (~50 RPM tiered)
-10. SambaNova (generous dev quota)
-11. Fireworks AI ($1 credits)
-12. Hyperbolic ($1 credits)
-13. OVHcloud AI (2 req/min/IP free)
-14. Replicate (6 req/min free)
-15. Codestral (30 RPM, 2K req/day)
-16. ZAI (generous free quota)
-17. Scaleway (1M tokens)
-18. Alibaba DashScope (1M tokens/90 days)
-19. SiliconFlow (100 req/day + $1 credits)
-20. Rovo Dev CLI (5M tokens/day)
-21. Gemini CLI (1K req/day)
-22. Chutes AI (free community GPU)
-23. OpenCode Zen (free with account)
-24. Together AI (❌ no free tier)
-25. iFlow (⚠️ shutting down April 17, 2026)
+1. NVIDIA NIM (~40 RPM, 46 models)
+2. Groq (30 RPM, 1K-14.4K req/day, 8 models)
+3. Cerebras (30 RPM, 1M tokens/day, 4 models)
+4. Google AI Studio (15-60 RPM, 250-1.5K req/day, 6 models)
+5. Cloudflare Workers AI (10K neurons/day, 15 models)
+6. OpenRouter (50 req/day free, 25 models)
+7. DeepInfra (200 concurrent requests, 4 models)
+8. HuggingFace (~$0.10/month, 2 models)
+9. Perplexity (~50 RPM tiered, 4 models)
+10. SambaNova (generous dev quota, 13 models)
+11. Fireworks AI ($1 credits, 4 models)
+12. Hyperbolic ($1 credits, 13 models)
+13. OVHcloud AI (2 req/min/IP free, 8 models)
+14. Replicate (6 req/min free, 2 models)
+15. Codestral (30 RPM, 2K req/day, 1 model)
+16. ZAI (generous free quota, 7 models)
+17. Scaleway (1M tokens, 10 models)
+18. Alibaba DashScope (1M tokens/90 days, 11 models)
+19. SiliconFlow (100 req/day + $1 credits, 6 models)
+20. Rovo Dev CLI (5M tokens/day, 5 models)
+21. Gemini CLI (1K req/day, 3 models)
+22. Chutes AI (free community GPU, 4 models)
+23. OpenCode Zen (free with account, 7 models)
+24. Together AI (❌ no free tier, 19 models)
+25. iFlow (⚠️ shutting down April 17, 2026, 11 models)

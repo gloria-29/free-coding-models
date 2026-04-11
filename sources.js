@@ -483,6 +483,11 @@ export const opencodeZen = [
 // 📖 Providers ordered by generosity of free tier (most generous first)
 // 📖 See README for full tier-by-tier comparison
 export const sources = {
+  nvidia: {
+    name: 'NIM',
+    url: 'https://integrate.api.nvidia.com/v1/chat/completions',
+    models: nvidiaNim,
+  },
   groq: {
     name: 'Groq',
     url: 'https://api.groq.com/openai/v1/chat/completions',
@@ -497,11 +502,6 @@ export const sources = {
     name: 'Google AI Studio',
     url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
     models: googleai,
-  },
-  nvidia: {
-    name: 'NIM',
-    url: 'https://integrate.api.nvidia.com/v1/chat/completions',
-    models: nvidiaNim,
   },
   cloudflare: {
     name: 'Cloudflare AI',

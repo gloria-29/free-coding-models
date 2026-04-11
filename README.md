@@ -72,14 +72,14 @@ It then writes the model you pick directly into your coding tool's config — so
 
 Create a free account on one provider below to get started:
 
-**238 coding models** across 25 providers, ranked by generosity of free tier (most generous first).
+**238 coding models** across 25 providers, ranked by free tier generosity.
 
 | # | Provider | Models | Tier range | Free tier | Env var |
 |---|----------|--------|-----------|-----------|--------|
-| 1 | [Groq](https://console.groq.com/keys) | 8 | S → B | 30 RPM, 1K‑14.4K req/day (no credit card) | `GROQ_API_KEY` |
-| 2 | [Cerebras](https://cloud.cerebras.ai) | 4 | S+ → B | 30 RPM, 1M tokens/day (no credit card) | `CEREBRAS_API_KEY` |
-| 3 | [Google AI Studio](https://aistudio.google.com/apikey) | 6 | B+ → C | 15‑60 RPM, 250‑1.5K req/day (no credit card) | `GOOGLE_API_KEY` |
-| 4 | [NVIDIA NIM](https://build.nvidia.com) | 46 | S+ → C | ~40 RPM (no credit card) | `NVIDIA_API_KEY` |
+| 1 | [NVIDIA NIM](https://build.nvidia.com) | 46 | S+ → C | ~40 RPM (no credit card) | `NVIDIA_API_KEY` |
+| 2 | [Groq](https://console.groq.com/keys) | 8 | S → B | 30 RPM, 1K‑14.4K req/day (no credit card) | `GROQ_API_KEY` |
+| 3 | [Cerebras](https://cloud.cerebras.ai) | 4 | S+ → B | 30 RPM, 1M tokens/day (no credit card) | `CEREBRAS_API_KEY` |
+| 4 | [Google AI Studio](https://aistudio.google.com/apikey) | 6 | B+ → C | 15‑60 RPM, 250‑1.5K req/day (no credit card) | `GOOGLE_API_KEY` |
 | 5 | [Cloudflare Workers AI](https://dash.cloudflare.com) | 15 | S → B | 10K neurons/day, 300 RPM (no credit card) | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
 | 6 | [OpenRouter](https://openrouter.ai/keys) | 25 | S+ → C | 50 req/day free, 1K/day with $10 spend | `OPENROUTER_API_KEY` |
 | 7 | [DeepInfra](https://deepinfra.com/login) | 4 | A- → B+ | 200 concurrent requests (no credit card) | `DEEPINFRA_API_KEY` |
