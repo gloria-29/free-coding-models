@@ -55,10 +55,81 @@ const PROVIDER_TEST_MODEL_OVERRIDES = {
 const SETTINGS_TEST_MAX_ATTEMPTS = 10
 const SETTINGS_TEST_RETRY_DELAY_MS = 4000
 
+// 📖 PROVIDER_AUTH_ENDPOINTS maps provider keys to their auth-check URL + method.
+// 📖 For most providers this is the /models endpoint (returns 200=valid, 401=invalid).
+// 📖 Providers without an auth-check endpoint use null (falls back to chat completion ping).
+// 📖 Special cases:
+// 📖   - replicate: uses /v1/predictions (not /models) but needs a different payload
+// 📖   - cloudflare: no auth endpoint — only has chat completions, always uses ping fallback
+const PROVIDER_AUTH_ENDPOINTS = {
+  nvidia:       { url: 'https://api.nvidia.com/v1/account',           method: 'GET' },
+  groq:         { url: 'https://api.groq.com/v1/models',             method: 'GET' },
+  cerebras:     { url: 'https://api.cerebras.ai/v1/models',          method: 'GET' },
+  sambanova:    { url: 'https://api.sambanova.ai/v1/models',         method: 'GET' },
+  openrouter:   { url: 'https://openrouter.ai/api/v1/models',        method: 'GET' },
+  huggingface:  { url: 'https://router.huggingface.co/v1/models',    method: 'GET' },
+  deepinfra:    { url: 'https://api.deepinfra.com/v1/models',        method: 'GET' },
+  fireworks:   { url: 'https://api.fireworks.ai/v1/models',         method: 'GET' },
+  hyperbolic:   { url: 'https://api.hyperbolic.xyz/v1/models',       method: 'GET' },
+  scaleway:     { url: 'https://api.scaleway.ai/v1/models',          method: 'GET' },
+  siliconflow:  { url: 'https://api.siliconflow.com/v1/models',     method: 'GET' },
+  together:     { url: 'https://api.together.xyz/v1/models',        method: 'GET' },
+  perplexity:   { url: 'https://api.perplexity.ai/v1/models',       method: 'GET' },
+  chutes:       { url: 'https://chutes.ai/v1/models',               method: 'GET' },
+  ovhcloud:     { url: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/models', method: 'GET' },
+  qwen:         { url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models', method: 'GET' },
+  iflow:        { url: 'https://apis.iflow.cn/v1/models',            method: 'GET' },
+  replicate:    null, // 📖 Replicate has no /models endpoint; use chat completions ping
+  cloudflare:   null, // 📖 Workers AI has no auth-check endpoint; use ping only
+  zai:          null, // 📖 ZAI undocumented; use ping only
+  googleai:     null, // 📖 Google AI Studio has no OpenAI-compatible /models; use ping
+  'opencode-zen': null, // 📖 OpenCode Zen uses OpenCode auth only; use ping
+  rovo:         null, // 📖 CLI tool — no API key
+  gemini:       null, // 📖 CLI tool — no API key
+}
+
 // 📖 Sleep helper kept local to this module so the Settings key test flow can
 // 📖 back off between retries without leaking timer logic into the rest of the TUI.
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// 📖 testProviderKeyDirect: Fast auth-only check using /v1/account or /v1/models.
+// 📖 Fires 3 parallel probes to get a fast decisive result (auth error vs timeout vs 200).
+// 📖 Returns { code, ms } from the first non-timeout response, or the best available.
+async function testProviderKeyDirect(apiKey, providerKey) {
+  const authConfig = PROVIDER_AUTH_ENDPOINTS[providerKey]
+  if (!authConfig) return null
+
+  const { url, method } = authConfig
+  const headers = { Authorization: `Bearer ${apiKey}` }
+  if (providerKey === 'openrouter') {
+    headers['HTTP-Referer'] = 'https://github.com/vava-nessa/free-coding-models'
+    headers['X-Title'] = 'free-coding-models'
+  }
+
+  const parallel = 3
+  const promises = Array.from({ length: parallel }, async () => {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 8000)
+    const t0 = performance.now()
+    try {
+      const resp = await fetch(url, { method, headers, signal: ctrl.signal })
+      return { code: resp.status, ms: Math.round(performance.now() - t0) }
+    } catch (err) {
+      const isTimeout = err.name === 'AbortError'
+      return { code: isTimeout ? '000' : 'ERR', ms: isTimeout ? 'TIMEOUT' : Math.round(performance.now() - t0) }
+    } finally {
+      clearTimeout(timer)
+    }
+  })
+
+  const results = await Promise.all(promises)
+  const success = results.find(r => r.code === 200)
+  if (success) return success
+  const authFailure = results.find(r => r.code === 401 || r.code === 403)
+  if (authFailure) return authFailure
+  return results[0]
 }
 
 /**
@@ -471,7 +542,10 @@ export function createKeyHandler(ctx) {
   }
 
   // ─── Settings key test helper ───────────────────────────────────────────────
-  // 📖 Fires a single ping to the selected provider to verify the API key works.
+  // 📖 Verifies an API key by first doing a fast parallel auth-only probe (3×8s)
+  // 📖 to /v1/account or /v1/models, then falling back to chat completion pings.
+  // 📖 Auth-only result is decisive (200=valid, 401/403=invalid); only timeouts or
+  // 📖 providers without auth endpoints fall through to the ping-based approach.
   async function testProviderKey(providerKey) {
     const src = sources[providerKey]
     if (!src) return
@@ -484,6 +558,24 @@ export function createKeyHandler(ctx) {
       return
     }
 
+    // 📖 Fast path: parallel auth-only probes (3×8s) to /v1/account or /v1/models.
+    // 📖 200 = key valid and accepted. 401/403 = key rejected. null = no auth endpoint.
+    const authResult = await testProviderKeyDirect(testKey, providerKey)
+    if (authResult) {
+      if (authResult.code === 200) {
+        state.settingsTestResults[providerKey] = 'ok'
+        state.settingsTestDetails[providerKey] = buildProviderTestDetail(providerLabel, 'ok', [], `Auth-only probe returned HTTP 200.`)
+        return
+      }
+      if (authResult.code === 401 || authResult.code === 403) {
+        state.settingsTestResults[providerKey] = 'auth_error'
+        state.settingsTestDetails[providerKey] = buildProviderTestDetail(providerLabel, 'auth_error', [], `Auth probe returned HTTP ${authResult.code}.`)
+        return
+      }
+      // 📖 Timeout or ERR — fall through to ping-based approach below.
+    }
+
+    // 📖 Slow path: ping-based verification (providers without auth endpoint or timeouts).
     state.settingsTestResults[providerKey] = 'pending'
     state.settingsTestDetails[providerKey] = `Testing ${providerLabel} across up to ${SETTINGS_TEST_MAX_ATTEMPTS} probes...`
     const discoveredModelIds = []
@@ -508,7 +600,6 @@ export function createKeyHandler(ctx) {
           discoveryNote = `Live model discovery returned HTTP ${modelsResp.status}; falling back to the repo catalog.`
         }
       } catch (err) {
-        // 📖 Discovery failure is non-fatal; we still have repo-defined fallbacks.
         discoveryNote = `Live model discovery failed (${err?.name || 'error'}); falling back to the repo catalog.`
       }
     }
@@ -519,35 +610,46 @@ export function createKeyHandler(ctx) {
       state.settingsTestDetails[providerKey] = buildProviderTestDetail(providerLabel, 'fail', [], discoveryNote || 'No candidate model was available for probing.')
       return
     }
+
+    // 📖 Parallel ping burst: fire up to 5 probes simultaneously to get fast feedback.
+    const PARALLEL_PROBES = 5
     const attempts = []
+    let settled = false
 
-    for (let attemptIndex = 0; attemptIndex < SETTINGS_TEST_MAX_ATTEMPTS; attemptIndex++) {
-      const testModel = candidateModels[attemptIndex % candidateModels.length]
-      const { code } = await ping(testKey, testModel, providerKey, src.url)
-      attempts.push({ attempt: attemptIndex + 1, model: testModel, code })
+    while (!settled) {
+      const batch = []
+      for (let i = 0; i < PARALLEL_PROBES && attempts.length + batch.length < SETTINGS_TEST_MAX_ATTEMPTS; i++) {
+        const testModel = candidateModels[(attempts.length + batch.length) % candidateModels.length]
+        batch.push(ping(testKey, testModel, providerKey, src.url).then(({ code }) => ({ attempt: attempts.length + batch.length + 1, model: testModel, code })))
+      }
+      const batchResults = await Promise.all(batch)
+      attempts.push(...batchResults)
 
-      if (code === '200') {
+      // 📖 Check outcome after each parallel batch.
+      const outcome = classifyProviderTestOutcome(attempts.map(({ code }) => code))
+      if (outcome === 'ok') {
         state.settingsTestResults[providerKey] = 'ok'
         state.settingsTestDetails[providerKey] = buildProviderTestDetail(providerLabel, 'ok', attempts, discoveryNote)
-        return
+        settled = true
+        continue
       }
-
-      const outcome = classifyProviderTestOutcome(attempts.map(({ code: attemptCode }) => attemptCode))
       if (outcome === 'auth_error') {
         state.settingsTestResults[providerKey] = 'auth_error'
         state.settingsTestDetails[providerKey] = buildProviderTestDetail(providerLabel, 'auth_error', attempts, discoveryNote)
-        return
+        settled = true
+        continue
+      }
+      if (attempts.length >= SETTINGS_TEST_MAX_ATTEMPTS) {
+        state.settingsTestResults[providerKey] = outcome
+        state.settingsTestDetails[providerKey] = buildProviderTestDetail(providerLabel, outcome, attempts, discoveryNote)
+        settled = true
+        continue
       }
 
-      if (attemptIndex < SETTINGS_TEST_MAX_ATTEMPTS - 1) {
-        state.settingsTestDetails[providerKey] = `Testing ${providerLabel}... probe ${attemptIndex + 1}/${SETTINGS_TEST_MAX_ATTEMPTS} failed on ${testModel} (${code}). Retrying in ${SETTINGS_TEST_RETRY_DELAY_MS / 1000}s.`
-        await sleep(SETTINGS_TEST_RETRY_DELAY_MS)
-      }
+      // 📖 Show progress between batches, then pause before next round.
+      state.settingsTestDetails[providerKey] = `Testing ${providerLabel}... ${attempts.length}/${SETTINGS_TEST_MAX_ATTEMPTS} probes tried. Retrying in ${SETTINGS_TEST_RETRY_DELAY_MS / 1000}s.`
+      await sleep(SETTINGS_TEST_RETRY_DELAY_MS)
     }
-
-    const finalOutcome = classifyProviderTestOutcome(attempts.map(({ code }) => code))
-    state.settingsTestResults[providerKey] = finalOutcome
-    state.settingsTestDetails[providerKey] = buildProviderTestDetail(providerLabel, finalOutcome, attempts, discoveryNote)
   }
 
   // 📖 Manual update checker from settings; keeps status visible in maintenance row.
@@ -747,6 +849,20 @@ export function createKeyHandler(ctx) {
     state.settingsAddKeyMode = false
     state.settingsEditBuffer = ''
     state.settingsScrollOffset = 0
+
+    // 📖 Auto-test all configured API keys in parallel on Settings open.
+    // 📖 Each provider with a saved key fires a parallel auth probe batch immediately.
+    // 📖 The T key re-triggers a focused test on the selected row without clearing others.
+    const providerKeys = Object.keys(sources)
+    for (const pk of providerKeys) {
+      const testKey = getApiKey(state.config, pk)
+      if (testKey) {
+        // 📖 Fire and forget — update state as probes resolve.
+        testProviderKey(pk)
+      } else {
+        state.settingsTestResults[pk] = 'missing_key'
+      }
+    }
   }
 
   function openRecommendOverlay() {

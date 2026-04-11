@@ -1,10 +1,19 @@
-## [0.3.48] - 2026-04-11
+## [0.3.49] - 2026-04-11
 
-### Fixed
-- **jcode model validation freeze (for real this time)** — jcode has a hardcoded model whitelist that rejects bare model names like `gpt-oss-120b` via `--model` flag. The v0.3.47 fix using `JCODE_MODEL` env var didn't actually work — jcode silently ignores it for the `openai-compatible` provider. The real fix uses two strategies:
-  1. **Native providers**: For providers that jcode supports natively (Groq, Cerebras, DeepInfra, Scaleway, Together, Hugging Face, Fireworks, Chutes, OpenRouter, Perplexity, ZAI, Mistral), we now use `--provider groq` instead of `--provider openai-compatible`. Native providers accept namespaced model names like `openai/gpt-oss-120b` without validation issues.
-  2. **OpenAI-compatible fallback**: For providers without a native jcode match (NVIDIA NIM, SambaNova, etc.), we keep `--provider openai-compatible` but ensure model IDs always have a namespace prefix (`openai/gpt-oss-120b` instead of `gpt-oss-120b`) and set a placeholder `OPENROUTER_API_KEY` to satisfy jcode's false credential check on namespaced models.
+### Changed
 
-### Added
-- **`JCODE_NATIVE_PROVIDERS` mapping** — New provider mapping table that routes 12 of our providers to jcode's native provider system, with correct env var names extracted from the jcode binary. This gives better compatibility and avoids the `openai-compatible` provider's model validation bugs.
-- **`ensureJcodeModelPrefix()` helper** — Ensures model IDs always have a namespace prefix (e.g. `gpt-oss-120b` → `openai/gpt-oss-120b`) so jcode's whitelist validation is bypassed.
+- **API key validation now uses provider auth endpoints instead of pings** — Previously, testing an API key sent a chat completion `POST` to a model endpoint and waited for a 200 response. This was indirect (a model being down didn't mean the key was invalid) and slow (sequential probes with 4s delays).
+
+- **Parallel auth-only probes (3×8s)** — For providers that expose an OpenAI-compatible `/v1/models` or a `/v1/account` endpoint, the test now fires 3 simultaneous probes to that endpoint. A 200 response = key valid and accepted. A 401/403 response = key rejected (auth error). This is decisive and ~8× faster than the ping approach.
+
+- **Parallel ping burst fallback** — Providers without an auth-check endpoint (replicate, cloudflare, zai, googleai, opencode-zen, rovo, gemini) or that timed out now fall back to chat completion pings, but in **parallel batches of 5 probes** instead of 1-by-1 with 4s delays. This keeps the overall test under 30s even for "difficult" providers.
+
+- **Auto-test all keys on Settings open (`P`)** — Opening Settings now automatically fires parallel auth probes for all configured API keys simultaneously. Users see the status of every provider the moment they open the screen, instead of having to press `T` for each one individually.
+
+### Providers with dedicated auth endpoints
+
+| Provider | Auth check endpoint | Method |
+|----------|-------------------|--------|
+| NVIDIA NIM | `/v1/account` | GET |
+| Groq, Cerebras, SambaNova, OpenRouter, HuggingFace, DeepInfra, Fireworks, Hyperbolic, Scaleway, SiliconFlow, Together, Perplexity, Chutes, OVHcloud, Qwen, iFlow | `/v1/models` | GET |
+
