@@ -480,12 +480,9 @@ export const opencodeZen = [
 
 // 📖 All sources combined - used by the main script
 // 📖 Each source has: name (display), url (API endpoint), models (array of model tuples)
+// 📖 Providers ordered by generosity of free tier (most generous first)
+// 📖 See README for full tier-by-tier comparison
 export const sources = {
-  nvidia: {
-    name: 'NIM',
-    url: 'https://integrate.api.nvidia.com/v1/chat/completions',
-    models: nvidiaNim,
-  },
   groq: {
     name: 'Groq',
     url: 'https://api.groq.com/openai/v1/chat/completions',
@@ -496,92 +493,91 @@ export const sources = {
     url: 'https://api.cerebras.ai/v1/chat/completions',
     models: cerebras,
   },
-  sambanova: {
-    name: 'SambaNova',
-    url: 'https://api.sambanova.ai/v1/chat/completions',
-    models: sambanova,
-  },
-  openrouter: {
-    name: 'OpenRouter',
-    url: 'https://openrouter.ai/api/v1/chat/completions',
-    models: openrouter,
-  },
-  huggingface: {
-    name: 'Hugging Face',
-    url: 'https://router.huggingface.co/v1/chat/completions',
-    models: huggingface,
-  },
-  replicate: {
-    name: 'Replicate',
-    url: 'https://api.replicate.com/v1/predictions',
-    models: replicate,
-  },
-  deepinfra: {
-    name: 'DeepInfra',
-    url: 'https://api.deepinfra.com/v1/openai/chat/completions',
-    models: deepinfra,
-  },
-  fireworks: {
-    name: 'Fireworks',
-    url: 'https://api.fireworks.ai/inference/v1/chat/completions',
-    models: fireworks,
-  },
-  codestral: {
-    name: 'Codestral',
-    url: 'https://api.mistral.ai/v1/chat/completions',
-    models: codestral,
-  },
-  hyperbolic: {
-    name: 'Hyperbolic',
-    url: 'https://api.hyperbolic.xyz/v1/chat/completions',
-    models: hyperbolic,
-  },
-  scaleway: {
-    name: 'Scaleway',
-    url: 'https://api.scaleway.ai/v1/chat/completions',
-    models: scaleway,
-  },
   googleai: {
-    name: 'Google AI',
+    name: 'Google AI Studio',
     url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
     models: googleai,
   },
-  zai: {
-    name: 'ZAI',
-    url: 'https://api.z.ai/api/coding/paas/v4/chat/completions',
-    models: zai,
-  },
-  siliconflow: {
-    name: 'SiliconFlow',
-    url: 'https://api.siliconflow.com/v1/chat/completions',
-    models: siliconflow,
-  },
-  together: {
-    name: 'Together AI',
-    url: 'https://api.together.xyz/v1/chat/completions',
-    models: together,
+  nvidia: {
+    name: 'NIM',
+    url: 'https://integrate.api.nvidia.com/v1/chat/completions',
+    models: nvidiaNim,
   },
   cloudflare: {
     name: 'Cloudflare AI',
     url: 'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1/chat/completions',
     models: cloudflare,
   },
+  openrouter: {
+    name: 'OpenRouter',
+    url: 'https://openrouter.ai/api/v1/chat/completions',
+    models: openrouter,
+  },
+  deepinfra: {
+    name: 'DeepInfra',
+    url: 'https://api.deepinfra.com/v1/openai/chat/completions',
+    models: deepinfra,
+  },
+  huggingface: {
+    name: 'Hugging Face',
+    url: 'https://router.huggingface.co/v1/chat/completions',
+    models: huggingface,
+  },
   perplexity: {
     name: 'Perplexity',
     url: 'https://api.perplexity.ai/chat/completions',
     models: perplexity,
   },
+  sambanova: {
+    name: 'SambaNova',
+    url: 'https://api.sambanova.ai/v1/chat/completions',
+    models: sambanova,
+  },
+  fireworks: {
+    name: 'Fireworks',
+    url: 'https://api.fireworks.ai/inference/v1/chat/completions',
+    models: fireworks,
+  },
+  hyperbolic: {
+    name: 'Hyperbolic',
+    url: 'https://api.hyperbolic.xyz/v1/chat/completions',
+    models: hyperbolic,
+  },
+  ovhcloud: {
+    name: 'OVHcloud AI',
+    url: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/chat/completions',
+    models: ovhcloud,
+  },
+  replicate: {
+    name: 'Replicate',
+    url: 'https://api.replicate.com/v1/predictions',
+    models: replicate,
+  },
+  codestral: {
+    name: 'Codestral',
+    url: 'https://api.mistral.ai/v1/chat/completions',
+    models: codestral,
+  },
+  zai: {
+    name: 'ZAI',
+    url: 'https://api.z.ai/api/coding/paas/v4/chat/completions',
+    models: zai,
+  },
+  scaleway: {
+    name: 'Scaleway',
+    url: 'https://api.scaleway.ai/v1/chat/completions',
+    models: scaleway,
+  },
   qwen: {
-    name: 'Alibaba Cloud (DashScope)',
+    name: 'Alibaba DashScope',
     url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions',
     models: qwen,
   },
-  iflow: {
-    name: 'iFlow',
-    url: 'https://apis.iflow.cn/v1/chat/completions',
-    models: iflow,
+  siliconflow: {
+    name: 'SiliconFlow',
+    url: 'https://api.siliconflow.com/v1/chat/completions',
+    models: siliconflow,
   },
-  // 📖 CLI-only tools (no API endpoint - launched directly)
   rovo: {
     name: 'Rovo Dev CLI',
     url: null, // CLI tool - no API endpoint
@@ -600,21 +596,27 @@ export const sources = {
     binary: 'gemini',
     checkArgs: ['--version'],
   },
+  chutes: {
+    name: 'Chutes AI',
+    url: 'https://chutes.ai/v1/chat/completions',
+    models: chutes,
+  },
   'opencode-zen': {
     name: 'OpenCode Zen',
     url: 'https://opencode.ai/zen/v1/chat/completions',
     models: opencodeZen,
     zenOnly: true,
   },
-  chutes: {
-    name: 'Chutes AI',
-    url: 'https://chutes.ai/v1/chat/completions',
-    models: chutes,
+  together: {
+    name: 'Together AI',
+    url: 'https://api.together.xyz/v1/chat/completions',
+    models: together,
   },
-  ovhcloud: {
-    name: 'OVHcloud AI 🆕',
-    url: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/chat/completions',
-    models: ovhcloud,
+  iflow: {
+    name: 'iFlow ⚠️',
+    url: 'https://apis.iflow.cn/v1/chat/completions',
+    models: iflow,
+    shutdownDate: '2026-04-17', // 📖 Shutting down April 17, 2026
   },
 }
 

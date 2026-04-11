@@ -1,19 +1,41 @@
-## [0.3.49] - 2026-04-11
+## [0.3.50] - 2026-04-11
 
 ### Changed
 
-- **API key validation now uses provider auth endpoints instead of pings** — Previously, testing an API key sent a chat completion `POST` to a model endpoint and waited for a 200 response. This was indirect (a model being down didn't mean the key was invalid) and slow (sequential probes with 4s delays).
+- **Providers reordered by generosity of free tier** — All 25 providers are now sorted from most generous to least generous in the README, TUI Settings page, and `D` key filter cycling. No more hunting for the best free option.
 
-- **Parallel auth-only probes (3×8s)** — For providers that expose an OpenAI-compatible `/v1/models` or a `/v1/account` endpoint, the test now fires 3 simultaneous probes to that endpoint. A 200 response = key valid and accepted. A 401/403 response = key rejected (auth error). This is decisive and ~8× faster than the ping approach.
+- **Free tier limits corrected across all providers** — Verified and corrected free tier limits for every provider using live web research. Key corrections:
+  - **Groq**: 30 RPM, 1K-14.4K req/day (previously listed as "30-50 RPM per model")
+  - **Google AI Studio**: 15-60 RPM, 250-1.5K req/day (previously listed as "14.4K req/day, 30/min")
+  - **Together AI**: ❌ **No free tier** — requires $5 minimum purchase. Removed from the "free" recommendation.
+  - **iFlow**: ⚠️ **Shutting down April 17, 2026** — marked with warning in README and sources.js
 
-- **Parallel ping burst fallback** — Providers without an auth-check endpoint (replicate, cloudflare, zai, googleai, opencode-zen, rovo, gemini) or that timed out now fall back to chat completion pings, but in **parallel batches of 5 probes** instead of 1-by-1 with 4s delays. This keeps the overall test under 30s even for "difficult" providers.
+- **README subtitle updated** — Now says "ranked by generosity of free tier (most generous first)" instead of "ranked by SWE-bench"
 
-- **Auto-test all keys on Settings open (`P`)** — Opening Settings now automatically fires parallel auth probes for all configured API keys simultaneously. Users see the status of every provider the moment they open the screen, instead of having to press `T` for each one individually.
+### Provider generosity ranking (most generous first)
 
-### Providers with dedicated auth endpoints
-
-| Provider | Auth check endpoint | Method |
-|----------|-------------------|--------|
-| NVIDIA NIM | `/v1/account` | GET |
-| Groq, Cerebras, SambaNova, OpenRouter, HuggingFace, DeepInfra, Fireworks, Hyperbolic, Scaleway, SiliconFlow, Together, Perplexity, Chutes, OVHcloud, Qwen, iFlow | `/v1/models` | GET |
-
+1. Groq (30 RPM, 1K-14.4K req/day)
+2. Cerebras (1M tokens/day)
+3. Google AI Studio (15-60 RPM, 250-1.5K req/day)
+4. NVIDIA NIM (~40 RPM)
+5. Cloudflare Workers AI (10K neurons/day)
+6. OpenRouter (50 req/day free)
+7. DeepInfra (200 concurrent requests)
+8. HuggingFace (~$0.10/month)
+9. Perplexity (~50 RPM tiered)
+10. SambaNova (generous dev quota)
+11. Fireworks AI ($1 credits)
+12. Hyperbolic ($1 credits)
+13. OVHcloud AI (2 req/min/IP free)
+14. Replicate (6 req/min free)
+15. Codestral (30 RPM, 2K req/day)
+16. ZAI (generous free quota)
+17. Scaleway (1M tokens)
+18. Alibaba DashScope (1M tokens/90 days)
+19. SiliconFlow (100 req/day + $1 credits)
+20. Rovo Dev CLI (5M tokens/day)
+21. Gemini CLI (1K req/day)
+22. Chutes AI (free community GPU)
+23. OpenCode Zen (free with account)
+24. Together AI (❌ no free tier)
+25. iFlow (⚠️ shutting down April 17, 2026)

@@ -72,35 +72,35 @@ It then writes the model you pick directly into your coding tool's config — so
 
 Create a free account on one provider below to get started:
 
-**238 coding models** across 25 providers, ranked by [SWE-bench Verified](https://www.swebench.com).
+**238 coding models** across 25 providers, ranked by generosity of free tier (most generous first).
 
 | # | Provider | Models | Tier range | Free tier | Env var |
 |---|----------|--------|-----------|-----------|--------|
-| 1 | [NVIDIA NIM](https://build.nvidia.com) | 46 | S+ → C | 40 req/min (no credit card) | `NVIDIA_API_KEY` |
-| 2 | [OpenRouter](https://openrouter.ai/keys) | 25 | S+ → C | Free: 50/day, 1K/day with $10 spend (20 req/min) | `OPENROUTER_API_KEY` |
-| 3 | [Together AI](https://api.together.ai/settings/api-keys) | 19 | S+ → A- | Credits/promos vary by account | `TOGETHER_API_KEY` |
-| 4 | [SambaNova](https://sambanova.ai/developers) | 13 | S+ → B | Dev tier generous quota | `SAMBANOVA_API_KEY` |
-| 5 | [Hyperbolic](https://app.hyperbolic.ai/settings) | 13 | S+ → A- | $1 free credits (permanent) | `HYPERBOLIC_API_KEY` |
-| 6 | [Cloudflare Workers AI](https://dash.cloudflare.com) | 15 | S → B | 10k neurons/day, 300 RPM | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
-| 7 | [iFlow](https://platform.iflow.cn) | 11 | S+ → A+ | Free (no req limits, 7-day key) | `IFLOW_API_KEY` |
-| 8 | [Alibaba DashScope](https://modelstudio.console.alibabacloud.com) | 11 | S+ → A | 1M free tokens/model (90 days) | `DASHSCOPE_API_KEY` |
-| 9 | [Scaleway](https://console.scaleway.com/iam/api-keys) | 10 | S+ → B+ | 1M free tokens (permanent) | `SCALEWAY_API_KEY` |
-| 10 | [Groq](https://console.groq.com/keys) | 8 | S → B | 30‑50 RPM per model | `GROQ_API_KEY` |
-| 11 | [OVHcloud AI Endpoints](https://endpoints.ai.cloud.ovh.net) | 8 | S → B | 2 req/min/IP free, 400 RPM with key | `OVH_AI_ENDPOINTS_ACCESS_TOKEN` |
-| 12 | [ZAI](https://z.ai) | 7 | S+ → S | Generous free quota | `ZAI_API_KEY` |
-| 13 | [OpenCode Zen](https://opencode.ai/zen) | 7 | S+ → A+ | Free with OpenCode account | Zen models ✨ |
-| 14 | [Rovo Dev CLI](https://www.atlassian.com/rovo) | 5 | S+ | 5M tokens/day (beta) | CLI tool 🦘 |
-| 15 | [SiliconFlow](https://cloud.siliconflow.cn/account/ak) | 6 | S+ → A | ~100 RPM (varies by model) | `SILICONFLOW_API_KEY` |
-| 16 | [Chutes AI](https://chutes.ai) | 4 | S → A | Free community GPU (no card) | `CHUTES_API_KEY` |
-| 17 | [Cerebras](https://cloud.cerebras.ai) | 4 | S+ → B | 30 RPM, 1M tokens/day | `CEREBRAS_API_KEY` |
-| 18 | [Fireworks AI](https://fireworks.ai) | 4 | S → B+ | $1 credits, 10 req/min without payment | `FIREWORKS_API_KEY` |
-| 19 | [Perplexity API](https://www.perplexity.ai/settings/api) | 4 | A+ → B | ~50 RPM (tiered by spend) | `PERPLEXITY_API_KEY` |
-| 20 | [DeepInfra](https://deepinfra.com/login) | 4 | A- → B+ | 200 concurrent requests | `DEEPINFRA_API_KEY` |
-| 21 | [Google AI Studio](https://aistudio.google.com/apikey) | 6 | B+ → C | 14.4K req/day, 30/min | `GOOGLE_API_KEY` |
-| 22 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 3 | S+ → A+ | 1,000 req/day | CLI tool ♊ |
-| 23 | [Hugging Face](https://huggingface.com/settings/tokens) | 2 | S → B | ~$0.10/month credits | `HUGGINGFACE_API_KEY` |
-| 24 | [Replicate](https://replicate.com/account/api-tokens) | 2 | A- → B | 6 req/min free, 3K RPM with payment | `REPLICATE_API_TOKEN` |
-| 25 | [Mistral Codestral](https://codestral.mistral.ai) | 1 | B+ | 30 req/min, 2,000/day | `CODESTRAL_API_KEY` |
+| 1 | [Groq](https://console.groq.com/keys) | 8 | S → B | 30 RPM, 1K‑14.4K req/day (no credit card) | `GROQ_API_KEY` |
+| 2 | [Cerebras](https://cloud.cerebras.ai) | 4 | S+ → B | 30 RPM, 1M tokens/day (no credit card) | `CEREBRAS_API_KEY` |
+| 3 | [Google AI Studio](https://aistudio.google.com/apikey) | 6 | B+ → C | 15‑60 RPM, 250‑1.5K req/day (no credit card) | `GOOGLE_API_KEY` |
+| 4 | [NVIDIA NIM](https://build.nvidia.com) | 46 | S+ → C | ~40 RPM (no credit card) | `NVIDIA_API_KEY` |
+| 5 | [Cloudflare Workers AI](https://dash.cloudflare.com) | 15 | S → B | 10K neurons/day, 300 RPM (no credit card) | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
+| 6 | [OpenRouter](https://openrouter.ai/keys) | 25 | S+ → C | 50 req/day free, 1K/day with $10 spend | `OPENROUTER_API_KEY` |
+| 7 | [DeepInfra](https://deepinfra.com/login) | 4 | A- → B+ | 200 concurrent requests (no credit card) | `DEEPINFRA_API_KEY` |
+| 8 | [Hugging Face](https://huggingface.com/settings/tokens) | 2 | S → B | ~$0.10/month free credits | `HUGGINGFACE_API_KEY` |
+| 9 | [Perplexity API](https://www.perplexity.ai/settings/api) | 4 | A+ → B | ~50 RPM (tiered by spend) | `PERPLEXITY_API_KEY` |
+| 10 | [SambaNova](https://sambanova.ai/developers) | 13 | S+ → B | Dev tier generous quota (no credit card) | `SAMBANOVA_API_KEY` |
+| 11 | [Fireworks AI](https://fireworks.ai) | 4 | S → B+ | $1 free credits, 10 RPM without payment | `FIREWORKS_API_KEY` |
+| 12 | [Hyperbolic](https://app.hyperbolic.ai/settings) | 13 | S+ → A- | $1 free credits (permanent) | `HYPERBOLIC_API_KEY` |
+| 13 | [OVHcloud AI Endpoints](https://endpoints.ai.cloud.ovh.net) | 8 | S → B | 2 req/min/IP free, 400 RPM with key | `OVH_AI_ENDPOINTS_ACCESS_TOKEN` |
+| 14 | [Replicate](https://replicate.com/account/api-tokens) | 2 | A- → B | 6 req/min free, 3K RPM with payment | `REPLICATE_API_TOKEN` |
+| 15 | [Codestral](https://codestral.mistral.ai) | 1 | B+ | 30 RPM, 2K req/day (no credit card) | `CODESTRAL_API_KEY` |
+| 16 | [ZAI](https://z.ai) | 7 | S+ → S | Generous free quota (concurrency limited) | `ZAI_API_KEY` |
+| 17 | [Scaleway](https://console.scaleway.com/iam/api-keys) | 10 | S+ → B+ | 1M free tokens (permanent) | `SCALEWAY_API_KEY` |
+| 18 | [Alibaba DashScope](https://modelstudio.console.alibabacloud.com) | 11 | S+ → A | 1M free tokens/model (90 days) | `DASHSCOPE_API_KEY` |
+| 19 | [SiliconFlow](https://cloud.siliconflow.cn/account/ak) | 6 | S+ → A | 100 req/day + $1 free credits | `SILICONFLOW_API_KEY` |
+| 20 | [Rovo Dev CLI](https://www.atlassian.com/rovo) | 5 | S+ | 5M tokens/day (beta) | CLI tool 🦘 |
+| 21 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 3 | S+ → A+ | 1,000 req/day (no credit card) | CLI tool ♊ |
+| 22 | [Chutes AI](https://chutes.ai) | 4 | S → A | Free community GPU (no credit card) | `CHUTES_API_KEY` |
+| 23 | [OpenCode Zen](https://opencode.ai/zen) | 7 | S+ → A+ | Free with OpenCode account | Zen models ✨ |
+| 24 | [Together AI](https://api.together.ai/settings/api-keys) | 19 | S+ → A- | ❌ No free tier — requires $5 purchase | `TOGETHER_API_KEY` |
+| 25 | [iFlow ⚠️](https://platform.iflow.cn) | 11 | S+ → A+ | Shutting down April 17, 2026 | `IFLOW_API_KEY` |
 
 > 💡 One key is enough. Add more at any time with **`P`** inside the TUI.
 
