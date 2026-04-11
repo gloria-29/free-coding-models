@@ -178,6 +178,33 @@ export function buildToolEnv(mode, model, config, options = {}) {
   return { env, apiKey, baseUrl, providerUrl }
 }
 
+// 📖 jcode rejects bare model names (e.g. "gpt-oss-120b") against its hardcoded whitelist.
+// 📖 But namespaced names like "openai/gpt-oss-120b" bypass the validation entirely.
+// 📖 This helper ensures model IDs always have a namespace prefix for jcode compatibility.
+function ensureJcodeModelPrefix(modelId) {
+  if (modelId.includes('/')) return modelId
+  return `openai/${modelId}`
+}
+
+// 📖 Map our provider keys → jcode native provider names + their expected env var.
+// 📖 Using native providers avoids the openai-compatible model validation bug where
+// 📖 jcode incorrectly routes namespaced models (e.g. "openai/gpt-oss-120b") to OpenRouter.
+// 📖 Env var names were extracted from the jcode binary — they must match exactly.
+const JCODE_NATIVE_PROVIDERS = {
+  groq:       { provider: 'groq',          envKey: 'GROQ_API_KEY' },
+  cerebras:   { provider: 'cerebras',      envKey: 'CEREBRAS_API_KEY' },
+  deepinfra:  { provider: 'deepinfra',     envKey: 'DEEPINFRA_API_KEY' },
+  scaleway:   { provider: 'scaleway',      envKey: 'SCALEWAY_API_KEY' },
+  together:   { provider: 'together-ai',   envKey: 'TOGETHER_API_KEY' },
+  huggingface:{ provider: 'hugging-face',  envKey: 'HF_TOKEN' },
+  fireworks:  { provider: 'fireworks',     envKey: 'FIREWORKS_API_KEY' },
+  chutes:     { provider: 'chutes',        envKey: 'CHUTES_API_KEY' },
+  openrouter: { provider: 'openrouter',    envKey: 'OPENROUTER_API_KEY' },
+  perplexity: { provider: 'perplexity',    envKey: 'PERPLEXITY_API_KEY' },
+  zai:        { provider: 'zai',           envKey: 'ZHIPU_API_KEY' },
+  codestral:  { provider: 'mistral',       envKey: 'MISTRAL_API_KEY' },
+}
+
 function spawnCommand(command, args, env) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -759,36 +786,47 @@ export function prepareExternalToolLaunch(mode, model, config, options = {}) {
   }
 
   if (mode === 'jcode') {
-    // 📖 jcode supports OpenAI-compatible providers via --provider openai-compatible
-    // 📖 For custom endpoints, it reads: OPENAI_BASE_URL, OPENAI_API_KEY env vars
-    // 📖 We use JCODE_MODEL env var instead of --model flag to bypass jcode's hardcoded
-    // 📖 model whitelist validation (which rejects custom models like gpt-oss-120b)
-    if (model.providerKey === 'nvidia') {
-      const jcodeModelId = model.modelId.replace(/^nvidia\//, '').replace(/^openai\//, '')
-      const nvidiaBaseUrl = 'https://integrate.api.nvidia.com/v1'
-      const nvidiaEnv = { ...env, OPENAI_BASE_URL: nvidiaBaseUrl, OPENAI_API_KEY: apiKey, JCODE_MODEL: jcodeModelId }
-      console.log(chalk.dim(`  📖 jcode will use provider: openai-compatible / model: ${jcodeModelId}`))
+    // 📖 jcode has a hardcoded model whitelist — bare names like "gpt-oss-120b" are rejected.
+    // 📖 Namespaced names like "openai/gpt-oss-120b" bypass it, but only work with native providers.
+    // 📖 With --provider openai-compatible, jcode incorrectly routes namespaced models to OpenRouter.
+    // 📖 Strategy: use jcode's native provider when available, fall back to openai-compatible + workaround.
+    const jcodeModelId = ensureJcodeModelPrefix(model.modelId)
+    const nativeMapping = JCODE_NATIVE_PROVIDERS[model.providerKey]
+
+    if (nativeMapping) {
+      // 📖 Use jcode's native provider — avoids the openai-compatible model validation bug
+      const jcodeEnv = { ...env, [nativeMapping.envKey]: apiKey }
+      console.log(chalk.dim(`  📖 jcode will use provider: ${nativeMapping.provider} / model: ${jcodeModelId}`))
       return {
         command: 'jcode',
-        args: ['repl', '--provider', 'openai-compatible'],
-        env: nvidiaEnv,
+        args: ['repl', '--provider', nativeMapping.provider, '--model', jcodeModelId],
+        env: jcodeEnv,
         apiKey,
-        baseUrl: nvidiaBaseUrl,
+        baseUrl,
         meta,
         configArtifacts: [],
       }
     }
-    // 📖 For other providers, use --provider openai-compatible with base URL + API key in env
-    // 📖 jcode's openai-compatible provider reads OPENAI_BASE_URL and OPENAI_API_KEY
-    const jcodeModelId = model.modelId.replace(/^openai\//, '')
-    const jcodeEnv = { ...env, OPENAI_BASE_URL: baseUrl, OPENAI_API_KEY: apiKey, JCODE_MODEL: jcodeModelId }
+
+    // 📖 Fallback for providers without a native jcode match (nvidia, sambanova, etc.)
+    // 📖 openai-compatible + namespaced model triggers a false OpenRouter credential check,
+    // 📖 so we set a placeholder OPENROUTER_API_KEY to satisfy jcode's validation.
+    const providerBaseUrl = model.providerKey === 'nvidia'
+      ? 'https://integrate.api.nvidia.com/v1'
+      : baseUrl
+    const jcodeEnv = {
+      ...env,
+      OPENAI_BASE_URL: providerBaseUrl,
+      OPENAI_API_KEY: apiKey,
+      OPENROUTER_API_KEY: env.OPENROUTER_API_KEY || 'fcm-bypass',
+    }
     console.log(chalk.dim(`  📖 jcode will use provider: openai-compatible / model: ${jcodeModelId}`))
     return {
       command: 'jcode',
-      args: ['repl', '--provider', 'openai-compatible'],
+      args: ['repl', '--provider', 'openai-compatible', '--model', jcodeModelId],
       env: jcodeEnv,
       apiKey,
-      baseUrl,
+      baseUrl: providerBaseUrl,
       meta,
       configArtifacts: [],
     }
