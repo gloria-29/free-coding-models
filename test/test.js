@@ -1026,7 +1026,8 @@ describe('renderTable responsive column visibility', () => {
   const renderAtWidth = (cols) => renderTable(
     [mockResult({ providerKey: 'nvidia', totalTokens: 0, pings: [{ ms: 200, code: '200' }] })],
     0, 0, null, 'avg', 'asc', 10_000, Date.now(), 'opencode',
-    0, 0, 30, cols
+    0, 0, 30, cols,
+    0, null, 'normal', 'auto', false, null, false, 0, 'idle', null, false, null, false
   )
 
   // 📖 Full row width = 169 cols (12 data cols + 11 separators + 2 margin)
@@ -1372,6 +1373,11 @@ describe('parseArgs', () => {
   it('detects --opencode-desktop flag', () => {
     assert.equal(parseArgs(argv('--opencode-desktop')).openCodeDesktopMode, true)
     assert.equal(parseArgs(argv()).openCodeDesktopMode, false)
+  })
+
+  it('detects --opencode-web flag', () => {
+    assert.equal(parseArgs(argv('--opencode-web')).openCodeWebMode, true)
+    assert.equal(parseArgs(argv()).openCodeWebMode, false)
   })
 
   it('detects external tool flags', () => {
@@ -2296,9 +2302,9 @@ describe('tool compatibility matrix', () => {
     assert.deepEqual(tools, ['gemini'])
   })
 
-  it('opencode-zen models are only compatible with opencode and opencode-desktop', () => {
+  it('opencode-zen models are only compatible with opencode, opencode-desktop and opencode-web', () => {
     const tools = getCompatibleTools('opencode-zen')
-    assert.deepEqual(tools, ['opencode', 'opencode-desktop'])
+    assert.deepEqual(tools, ['opencode', 'opencode-desktop', 'opencode-web'])
   })
 
   it('isModelCompatibleWithTool returns true for matching pairs', () => {
@@ -2307,6 +2313,7 @@ describe('tool compatibility matrix', () => {
     assert.ok(isModelCompatibleWithTool('gemini', 'gemini'))
     assert.ok(isModelCompatibleWithTool('opencode-zen', 'opencode'))
     assert.ok(isModelCompatibleWithTool('opencode-zen', 'opencode-desktop'))
+    assert.ok(isModelCompatibleWithTool('opencode-zen', 'opencode-web'))
   })
 
   it('isModelCompatibleWithTool returns false for incompatible pairs', () => {

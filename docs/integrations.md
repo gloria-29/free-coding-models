@@ -16,6 +16,7 @@ Every tool follows the same pattern:
 |------|------|----------------|
 | OpenCode CLI | `--opencode` | `~/.config/opencode/opencode.json` |
 | OpenCode Desktop | `--opencode-desktop` | `~/.config/opencode/opencode.json` (then opens app) |
+| OpenCode WebUI | `--opencode-web` | `~/.config/opencode/opencode.json` (then opens web dashboard) |
 | OpenClaw | `--openclaw` | `~/.openclaw/openclaw.json` |
 | Crush | `--crush` | `~/.config/crush/crush.json` |
 | Goose | `--goose` | `~/.config/goose/config.yaml` + `custom_providers/` |

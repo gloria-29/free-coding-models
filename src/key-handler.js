@@ -264,6 +264,7 @@ export function createKeyHandler(ctx) {
     runUpdate,
     startOpenClaw,
     startOpenCodeDesktop,
+    startOpenCodeWeb,
     startOpenCode,
     startExternalTool,
     getToolModeOrder,
@@ -495,6 +496,8 @@ export function createKeyHandler(ctx) {
       exitCode = await startOpenClaw(userSelected, state.config, { launchCli: true })
     } else if (state.mode === 'opencode-desktop') {
       exitCode = await startOpenCodeDesktop(userSelected, state.config)
+    } else if (state.mode === 'opencode-web') {
+      exitCode = await startOpenCodeWeb(userSelected, state.config)
     } else if (state.mode === 'opencode') {
       exitCode = await startOpenCode(userSelected, state.config)
     } else {

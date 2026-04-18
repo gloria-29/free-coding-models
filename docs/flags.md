@@ -13,6 +13,7 @@ Start the TUI pre-configured to a specific tool. Press `Enter` on a model to aut
 | *(none)* | OpenCode CLI | Writes model to `opencode.json` and launches `opencode` CLI |
 | `--opencode` | OpenCode CLI | Same as above, explicit |
 | `--opencode-desktop` | OpenCode Desktop | Writes model to `opencode.json` and opens desktop app |
+| `--opencode-web` | OpenCode WebUI | Writes model to `opencode.json` and opens web dashboard |
 | `--openclaw` | OpenClaw | Writes model as primary in `~/.openclaw/openclaw.json` |
 | `--crush` | Crush | Writes model to `~/.config/crush/crush.json` and launches `crush` |
 | `--goose` | Goose | Writes provider config to `~/.config/goose/` and launches `goose` |

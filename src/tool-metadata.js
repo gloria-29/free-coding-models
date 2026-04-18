@@ -28,6 +28,7 @@
 export const TOOL_METADATA = {
   opencode:          { label: 'OpenCode CLI',     emoji: '📦', flag: '--opencode',         color: [110, 214, 255] },
   'opencode-desktop': { label: 'OpenCode Desktop', emoji: '📦', flag: '--opencode-desktop', color: [149, 205, 255] },
+  'opencode-web':     { label: 'OpenCode Web',     emoji: '📦', flag: '--opencode-web',     color: [180, 220, 255] },
   openclaw:          { label: 'OpenClaw',          emoji: '🦞', flag: '--openclaw',         color: [255, 129, 129] },
   crush:             { label: 'Crush',             emoji: '💘', flag: '--crush',            color: [255, 168, 209] },
   goose:             { label: 'Goose',             emoji: '🪿', flag: '--goose',            color: [132, 235, 168] },
@@ -49,7 +50,7 @@ export const TOOL_METADATA = {
 // 📖 OpenCode CLI + Desktop are merged into a single 📦 slot since they share compatibility.
 // 📖 Each slot maps to one or more toolKeys for compatibility checking.
 export const COMPAT_COLUMN_SLOTS = [
-  { emoji: '📦', toolKeys: ['opencode', 'opencode-desktop'], color: [110, 214, 255] },
+  { emoji: '📦', toolKeys: ['opencode', 'opencode-desktop', 'opencode-web'], color: [110, 214, 255] },
   { emoji: '🦞', toolKeys: ['openclaw'],                     color: [255, 129, 129] },
   { emoji: '💘', toolKeys: ['crush'],                        color: [255, 168, 209] },
   { emoji: '🪿', toolKeys: ['goose'],                        color: [132, 235, 168] },
@@ -72,6 +73,7 @@ export const TOOL_MODE_ORDER = [
   'pi',
   'jcode',
   'opencode-desktop',
+  'opencode-web',
   'openclaw',
   'crush',
   'goose',
@@ -100,7 +102,7 @@ export function getToolModeOrder() {
 const REGULAR_TOOLS = Object.keys(TOOL_METADATA).filter(k => !TOOL_METADATA[k].cliOnly)
 
 // 📖 Zen-only tools: OpenCode Zen models can ONLY run on OpenCode CLI / OpenCode Desktop.
-const ZEN_COMPATIBLE_TOOLS = ['opencode', 'opencode-desktop']
+const ZEN_COMPATIBLE_TOOLS = ['opencode', 'opencode-desktop', 'opencode-web']
 
 /**
  * 📖 Returns the list of tool keys a model is compatible with.

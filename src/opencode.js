@@ -543,6 +543,80 @@ export async function startOpenCode(model, fcmConfig) {
   await spawnOpenCode(['--model', modelRef], providerKey, fcmConfig)
 }
 
+// ─── Start OpenCode Web ───────────────────────────────────────────────────────
+
+export async function startOpenCodeWeb(model, fcmConfig) {
+  const providerKey = model.providerKey ?? 'nvidia'
+  const ocModelId = getOpenCodeModelId(providerKey, model.modelId)
+  const modelRef = `${providerKey}/${ocModelId}`
+
+  const launchWeb = async () => {
+    const { exec } = await import('child_process')
+    const url = 'https://opencode.ai'
+    let command
+    if (isMac) {
+      command = `open "${url}"`
+    } else if (isWindows) {
+      command = `start "${url}"`
+    } else {
+      command = `xdg-open "${url}"`
+    }
+    exec(command, (err) => {
+      if (err) {
+        console.error(chalk.red('  Could not open OpenCode WebUI'))
+        console.error(chalk.dim(`    Please visit ${url} manually`))
+      }
+    })
+  }
+
+  // 📖 Mirror OpenCode Desktop behavior: set the model in opencode.json
+  const config = loadOpenCodeConfig()
+  const backupPath = `${getOpenCodeConfigPath()}.backup-${Date.now()}`
+
+  if (existsSync(getOpenCodeConfigPath())) {
+    copyFileSync(getOpenCodeConfigPath(), backupPath)
+    console.log(chalk.dim(`  Backup: ${backupPath}`))
+  }
+
+  if (!config.provider) config.provider = {}
+  
+  // 📖 Provider-specific config setup (same as CLI/Desktop)
+  if (providerKey === 'nvidia' && !config.provider.nvidia) {
+    config.provider.nvidia = {
+      npm: '@ai-sdk/openai-compatible',
+      name: 'NVIDIA NIM',
+      options: { baseURL: 'https://integrate.api.nvidia.com/v1', apiKey: '{env:NVIDIA_API_KEY}' },
+      models: {}
+    }
+  } else if (providerKey === 'groq' && !config.provider.groq) {
+    config.provider.groq = { options: { apiKey: '{env:GROQ_API_KEY}' }, models: {} }
+  } else if (providerKey === 'cerebras' && !config.provider.cerebras) {
+    config.provider.cerebras = {
+      npm: '@ai-sdk/openai-compatible',
+      name: 'Cerebras',
+      options: { baseURL: 'https://api.cerebras.ai/v1', apiKey: '{env:CEREBRAS_API_KEY}' },
+      models: {}
+    }
+  }
+  // ... other providers are handled as they are selected
+
+  console.log(chalk.green(`  Setting ${chalk.bold(model.label)} as default (mirroring Desktop)...`))
+  
+  if (providerKey !== 'opencode-zen' && config.provider[providerKey]) {
+    if (!config.provider[providerKey].models) config.provider[providerKey].models = {}
+    config.provider[providerKey].models[ocModelId] = { name: model.label }
+  }
+
+  config.model = providerKey === 'opencode-zen' ? `opencode/${ocModelId}` : modelRef
+  saveOpenCodeConfig(config)
+
+  console.log(chalk.dim(`  Config saved to: ${getOpenCodeConfigPath()}`))
+  console.log(chalk.dim('  Opening OpenCode WebUI...'))
+  console.log()
+
+  await launchWeb()
+}
+
 // ─── Start OpenCode Desktop ───────────────────────────────────────────────────
 
 export async function startOpenCodeDesktop(model, fcmConfig) {

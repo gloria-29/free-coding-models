@@ -1,3 +1,9 @@
+## [0.3.52] - 2026-04-18
+
+### Added
+
+- **OpenCode WebUI Support** — Added `--opencode-web` flag to open the OpenCode WebUI dashboard after configuring the selected model. This mirrors the existing `--opencode-desktop` behavior.
+
 ## [0.3.51] - 2026-04-11
 
 ### Changed

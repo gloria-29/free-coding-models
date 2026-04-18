@@ -387,13 +387,13 @@ export function findBestModel(results) {
 //
 // 📖 Argument types:
 //   - API key: first positional arg that does not look like a CLI flag (e.g., "nvapi-xxx")
-//   - Boolean flags: --best, --fiable, --opencode, --opencode-desktop, --openclaw,
+//   - Boolean flags: --best, --fiable, --opencode, --opencode-desktop, --opencode-web, --openclaw,
 //     --aider, --crush, --goose, --qwen,
 //     --openhands, --amp, --pi, --no-telemetry, --json, --help/-h (case-insensitive)
 //   - Value flag: --tier <letter> (the next non-flag arg is the tier value)
 //
 // Returns:
-//   { apiKey, bestMode, fiableMode, openCodeMode, openCodeDesktopMode, openClawMode,
+//   { apiKey, bestMode, fiableMode, openCodeMode, openCodeDesktopMode, openCodeWebMode, openClawMode,
 //     aiderMode, crushMode, gooseMode, qwenMode, openHandsMode, ampMode,
 //     piMode, jcodeMode, noTelemetry, jsonMode, helpMode, tierFilter }
 //
@@ -446,6 +446,7 @@ export function parseArgs(argv) {
   const fiableMode = flags.includes('--fiable')
   const openCodeMode = flags.includes('--opencode')
   const openCodeDesktopMode = flags.includes('--opencode-desktop')
+  const openCodeWebMode = flags.includes('--opencode-web')
   const openClawMode = flags.includes('--openclaw')
   const aiderMode = flags.includes('--aider')
   const crushMode = flags.includes('--crush')
@@ -492,6 +493,7 @@ export function parseArgs(argv) {
     fiableMode,
     openCodeMode,
     openCodeDesktopMode,
+    openCodeWebMode,
     openClawMode,
     aiderMode,
     crushMode,

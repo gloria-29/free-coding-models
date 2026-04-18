@@ -20,6 +20,7 @@ import { TOOL_METADATA, TOOL_MODE_ORDER } from './tool-metadata.js'
 const TOOL_MODE_DESCRIPTIONS = {
   opencode: 'Launch in OpenCode CLI with the selected model.',
   'opencode-desktop': 'Set model in shared config, then open OpenCode Desktop.',
+  'opencode-web': 'Set model in shared config, then open OpenCode WebUI.',
   openclaw: 'Set default model in OpenClaw and launch it.',
   crush: 'Launch Crush with this provider/model pair.',
   goose: 'Launch Goose and preselect the active model.',

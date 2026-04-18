@@ -117,7 +117,7 @@ import { promptApiKey } from '../src/setup.js'
 import { syncShellEnv, ensureShellRcSource, promptShellEnvMigration, removeShellEnv } from '../src/shell-env.js'
 import { stripAnsi, maskApiKey, displayWidth, padEndDisplay, tintOverlayLines, keepOverlayTargetVisible, sliceOverlayLines, calculateViewport, sortResultsWithPinnedFavorites, adjustScrollOffset } from '../src/render-helpers.js'
 import { renderTable, PROVIDER_COLOR } from '../src/render-table.js'
-import { setOpenCodeModelData, startOpenCode, startOpenCodeDesktop } from '../src/opencode.js'
+import { setOpenCodeModelData, startOpenCode, startOpenCodeDesktop, startOpenCodeWeb } from '../src/opencode.js'
 import { startOpenClaw } from '../src/openclaw.js'
 import { createOverlayRenderers } from '../src/overlays.js'
 import { createKeyHandler, createMouseEventHandler } from '../src/key-handler.js'
@@ -252,6 +252,7 @@ export async function runApp(cliArgs, config) {
     const flagByMode = {
       opencode: cliArgs.openCodeMode,
       'opencode-desktop': cliArgs.openCodeDesktopMode,
+      'opencode-web': cliArgs.openCodeWebMode,
       openclaw: cliArgs.openClawMode,
       aider: cliArgs.aiderMode,
       crush: cliArgs.crushMode,
@@ -872,6 +873,7 @@ export async function runApp(cliArgs, config) {
     runUpdate,
     startOpenClaw,
     startOpenCodeDesktop,
+    startOpenCodeWeb,
     startOpenCode,
     startExternalTool,
     getToolModeOrder,
