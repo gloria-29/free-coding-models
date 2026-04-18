@@ -39,7 +39,7 @@ import { getLastLayout, COLUMN_SORT_MAP } from './render-table.js'
 import { cycleThemeSetting, detectActiveTheme } from './theme.js'
 import { syncShellEnv, ensureShellRcSource, removeShellEnv } from './shell-env.js'
 import { buildCommandPaletteTree, flattenCommandTree, filterCommandPaletteEntries } from './command-palette.js'
-import { WIDTH_WARNING_MIN_COLS } from './constants.js'
+import { WIDTH_WARNING_MIN_COLS, VERDICT_CYCLE, HEALTH_CYCLE } from './constants.js'
 import { scanAllToolConfigs, softDeleteModel } from './installed-models-manager.js'
 import { startExternalTool } from './tool-launchers.js'
 
@@ -2414,6 +2414,7 @@ export function createKeyHandler(ctx) {
       if (!state.config.settings || typeof state.config.settings !== 'object') state.config.settings = {}
       state.config.settings.footerHidden = state.footerHidden
       saveConfig(state.config)
+      state.frame++ // 📖 Force immediate re-render
       return
     }
 
@@ -2444,6 +2445,24 @@ export function createKeyHandler(ctx) {
       state.originFilterMode = (state.originFilterMode + 1) % ORIGIN_CYCLE.length
       applyTierFilter()
       // 📖 Recompute visible sorted list and reset cursor to avoid stale index into new filtered set
+      refreshVisibleSorted({ resetCursor: true })
+      persistUiSettings()
+      return
+    }
+
+    // 📖 Verdict filter key: V = cycle through each verdict (All → Perfect → Normal → Slow → ... → All)
+    if (key.name === 'v') {
+      state.verdictFilterMode = (state.verdictFilterMode + 1) % VERDICT_CYCLE.length
+      applyTierFilter()
+      refreshVisibleSorted({ resetCursor: true })
+      persistUiSettings()
+      return
+    }
+
+    // 📖 Health filter key: H = cycle through each health status (All → Up → Timeout → Down → ... → All)
+    if (key.name === 'h') {
+      state.healthFilterMode = (state.healthFilterMode + 1) % HEALTH_CYCLE.length
+      applyTierFilter()
       refreshVisibleSorted({ resetCursor: true })
       persistUiSettings()
       return

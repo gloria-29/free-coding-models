@@ -105,7 +105,7 @@ import { usageForRow as _usageForRow } from '../src/usage-reader.js'
 import { buildProviderModelTokenKey, loadTokenUsageByProviderModel } from '../src/token-usage-reader.js'
 import { parseOpenRouterResponse, fetchProviderQuota as _fetchProviderQuotaFromModule } from '../src/provider-quota-fetchers.js'
 import { isKnownQuotaTelemetry } from '../src/quota-capabilities.js'
-import { ALT_ENTER, ALT_LEAVE, ALT_HOME, PING_TIMEOUT, PING_INTERVAL, FPS, COL_MODEL, COL_MS, CELL_W, FRAMES, TIER_CYCLE, SETTINGS_OVERLAY_BG, HELP_OVERLAY_BG, RECOMMEND_OVERLAY_BG, OVERLAY_PANEL_WIDTH, TABLE_HEADER_LINES, TABLE_FOOTER_LINES, TABLE_FIXED_LINES, WIDTH_WARNING_MIN_COLS, msCell, spinCell } from '../src/constants.js'
+import { ALT_ENTER, ALT_LEAVE, ALT_HOME, PING_TIMEOUT, PING_INTERVAL, FPS, COL_MODEL, COL_MS, CELL_W, FRAMES, TIER_CYCLE, VERDICT_CYCLE, HEALTH_CYCLE, SETTINGS_OVERLAY_BG, HELP_OVERLAY_BG, RECOMMEND_OVERLAY_BG, OVERLAY_PANEL_WIDTH, TABLE_HEADER_LINES, TABLE_FOOTER_LINES, TABLE_FIXED_LINES, WIDTH_WARNING_MIN_COLS, msCell, spinCell } from '../src/constants.js'
 import { TIER_COLOR } from '../src/tier-colors.js'
 import { resolveCloudflareUrl, buildPingRequest, ping, extractQuotaPercent, getProviderQuotaPercentCached, usagePlaceholderForProvider } from '../src/ping.js'
 import { runFiableMode, filterByTierOrExit, fetchOpenRouterFreeModels } from '../src/analysis.js'
@@ -423,6 +423,8 @@ export async function runApp(cliArgs, config) {
     mode,                         // 📖 'opencode' or 'openclaw' — controls Enter action
     tierFilterMode: 0,            // 📖 Index into TIER_CYCLE (0=All, 1=S+, 2=S, ...)
     originFilterMode: 0,          // 📖 Index into ORIGIN_CYCLE (0=All, then providers)
+    verdictFilterMode: 0,        // 📖 Index into VERDICT_CYCLE (0=All, then verdicts)
+    healthFilterMode: 0,          // 📖 Index into HEALTH_CYCLE (0=All, then health states)
     hideUnconfiguredModels: config.settings?.hideUnconfiguredModels === true, // 📖 Hide providers with no configured API key when true.
     favoritesPinnedAndSticky: config.settings?.favoritesPinnedAndSticky === true, // 📖 false by default: favorites follow normal sort/filter rules until Y enables pinned+sticky mode.
     footerHidden: config.settings?.footerHidden === true, // 📖 true = footer is collapsed to a single toggle hint
@@ -739,6 +741,8 @@ export async function runApp(cliArgs, config) {
   function applyTierFilter() {
     const activeTier = TIER_CYCLE[state.tierFilterMode]
     const activeOrigin = ORIGIN_CYCLE[state.originFilterMode]
+    const activeVerdict = VERDICT_CYCLE[state.verdictFilterMode]
+    const activeHealth = HEALTH_CYCLE[state.healthFilterMode]
     state.results.forEach(r => {
       // 📖 Sticky-favorites mode keeps favorites visible regardless of configured-only, tier, or provider filters.
       if (state.favoritesPinnedAndSticky && r.isFavorite) {
@@ -754,12 +758,16 @@ export async function runApp(cliArgs, config) {
         r.hidden = true
         return
       }
-      // 📖 Apply both tier and origin filters — model is hidden if it fails either
-      // 📖 TIER_LETTER_MAP is used so --tier S also includes S+ models (tier family behavior).
+      // 📖 Apply tier, origin, verdict, and health filters — model is hidden if it fails any
       const allowedTiers = (activeTier && TIER_LETTER_MAP[activeTier]) ? TIER_LETTER_MAP[activeTier] : [activeTier]
       const tierHide = activeTier !== null && !allowedTiers.includes(r.tier)
       const originHide = activeOrigin !== null && r.providerKey !== activeOrigin
-      if (tierHide || originHide) {
+      // 📖 Verdict filter: match against getVerdict(r) when active
+      const rVerdict = getVerdict(r)
+      const verdictHide = activeVerdict !== null && rVerdict !== activeVerdict
+      // 📖 Health filter: match against r.status when active
+      const healthHide = activeHealth !== null && r.status !== activeHealth
+      if (tierHide || originHide || verdictHide || healthHide) {
         r.hidden = true
         return
       }
@@ -1042,7 +1050,10 @@ export async function runApp(cliArgs, config) {
           state.versionAlertsEnabled,
           state.favoritesPinnedAndSticky,
           state.customTextFilter,
-          state.lastReleaseDate
+          state.lastReleaseDate,
+          state.footerHidden,
+          state.verdictFilterMode,
+          state.healthFilterMode
         )
       }
       tableContent = state.commandPaletteFrozenTable
@@ -1077,7 +1088,10 @@ export async function runApp(cliArgs, config) {
         state.versionAlertsEnabled,
         state.favoritesPinnedAndSticky,
         state.customTextFilter,
-        state.lastReleaseDate
+        state.lastReleaseDate,
+        state.footerHidden,
+        state.verdictFilterMode,
+        state.healthFilterMode
       )
     }
 
@@ -1121,7 +1135,7 @@ export async function runApp(cliArgs, config) {
     pinFavorites: state.favoritesPinnedAndSticky,
   })
 
-      process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, null, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, false, state.startupLatestVersion, state.versionAlertsEnabled, state.favoritesPinnedAndSticky, state.customTextFilter, state.lastReleaseDate, state.footerHidden))
+      process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, null, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, false, state.startupLatestVersion, state.versionAlertsEnabled, state.favoritesPinnedAndSticky, state.customTextFilter, state.lastReleaseDate, state.footerHidden, state.verdictFilterMode, state.healthFilterMode))
   if (process.stdout.isTTY) {
     process.stdout.flush && process.stdout.flush()
   }

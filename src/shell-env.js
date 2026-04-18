@@ -41,6 +41,7 @@ import { join } from 'node:path'
 import * as readline from 'node:readline'
 import chalk from 'chalk'
 import { ENV_VAR_NAMES } from './provider-metadata.js'
+import { saveConfig } from './config.js'
 
 // 📖 Unique marker used to identify the source line we inject into shell rc files.
 // 📖 This allows idempotent add/remove without relying on exact path matching.
