@@ -58,6 +58,7 @@ import {
   activateRouterSet,
   reorderRouterSetModel,
   closeRouterSetsManagerOverlay,
+  addModelToRouterSet,
 } from './router-dashboard.js'
 
 // 📖 Some providers need an explicit probe model because the first catalog entry
@@ -960,22 +961,64 @@ export function createKeyHandler(ctx) {
   function openRouterAddModelOverlay() {
     const selected = state.visibleSorted[state.cursor]
     if (!selected) return
+    state.setsAddSelectedModel = {
+      provider: selected.providerKey,
+      model: selected.modelId,
+      label: selected.label,
+    }
     state.setsAddPositionPickerOpen = true
     state.setsAddPositionCursor = -1 // -1 = append at end
     state.setsAddModelSearch = ''
-    // 📖 The position picker is a mini overlay — render via setsOpen with special flag
     state.setsOpen = true
     state.setsCursor = 0
     state.setsScrollOffset = 0
-    state.setsActivePane = 'models'
+    state.setsActivePane = 'sets'
     state.setsEditMode = 'add-position-picker'
     state.setsEditBuffer = ''
     state.setsError = null
     void fetchRouterSets(state, { fetchFn })
   }
 
-  // 📖 Handles all Set Manager edit mode confirmations (create/rename/duplicate/delete/activate).
-  async function handleSetsEditConfirm(localState, selectedSetName, allSetNames) {
+  // 📖 Token Usage screen — Shift+T from main table. Fetches daily token history
+  // 📖 from the daemon and renders a 7-day chart plus today/all-time breakdowns.
+  async function openTokenUsageOverlay() {
+    state.tokenUsageOpen = true
+    state.tokenUsageScrollOffset = 0
+    state.tokenUsageError = null
+    state.tokenUsageData = null
+    // 📖 Discover daemon port
+    let port = 19280
+    try {
+      const { readFileSync: rfs } = await import('node:fs')
+      const portPath = `${process.env.HOME}/.free-coding-models-daemon.port`
+      const savedPort = rfs(portPath, 'utf8').trim()
+      if (/^\d+$/.test(savedPort)) port = Number(savedPort)
+    } catch {}
+    state.tokenUsageLastFetchAt = Date.now()
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 2000)
+      const res = await globalThis.fetch(`http://127.0.0.1:${port}/stats/tokens`, { signal: controller.signal })
+      clearTimeout(timer)
+      if (!res.ok) {
+        state.tokenUsageError = `Daemon returned HTTP ${res.status} — is the router running?`
+        return
+      }
+      const raw = await res.json()
+      state.tokenUsageData = raw
+    } catch (err) {
+      state.tokenUsageError = err?.name === 'AbortError' ? 'Request timed out — is the router daemon running?' : (err?.message || 'Failed to fetch token stats')
+    }
+  }
+
+  function closeTokenUsageOverlay() {
+    state.tokenUsageOpen = false
+    state.tokenUsageScrollOffset = 0
+    state.tokenUsageError = null
+  }
+
+  // 📖 Handles all Set Manager edit mode confirmations (create/rename/duplicate/delete/activate/add-model).
+  async function handleSetsEditConfirm(localState, selectedSetName, allSetNames, models) {
     const mode = localState.setsEditMode
     const buffer = localState.setsEditBuffer.trim()
     localState.setsEditMode = null
@@ -1012,6 +1055,19 @@ export function createKeyHandler(ctx) {
       if (!selectedSetName) return
       const result = await activateRouterSet(localState, selectedSetName, { fetchFn })
       if (!result.ok) { localState.setsError = result.error || 'Failed to activate set'; return }
+      return
+    }
+    if (mode === 'add-position-picker') {
+      const candidate = localState.setsAddSelectedModel
+      if (!candidate || !selectedSetName) { localState.setsError = 'No model or set selected'; return }
+      const priority = localState.setsAddPositionCursor >= 0
+        ? localState.setsAddPositionCursor + 1
+        : (models.length || 0) + 1
+      const result = await addModelToRouterSet(localState, selectedSetName, candidate.provider, candidate.model, priority, { fetchFn })
+      if (!result.ok) { localState.setsError = result.error || 'Failed to add model'; return }
+      localState.setsAddPositionPickerOpen = false
+      localState.setsAddSelectedModel = null
+      localState.setsEditMode = null
       return
     }
   }
@@ -1297,6 +1353,8 @@ export function createKeyHandler(ctx) {
       case 'open-feedback': return openFeedbackOverlay()
       case 'open-recommend': return openRecommendOverlay()
       case 'open-router-dashboard': return openRouterDashboardOverlay(state)
+      case 'open-router-sets': return openRouterSetsManagerOverlay()
+      case 'open-token-usage': return openTokenUsageOverlay()
       case 'open-install-endpoints': return openInstallEndpointsOverlay()
       case 'open-installed-models': return openInstalledModelsOverlay()
       case 'action-cycle-theme': return cycleGlobalTheme()
@@ -1496,15 +1554,15 @@ export function createKeyHandler(ctx) {
       const leftPaneMax = state.setsEditMode === 'create' ? 0 : Math.max(0, setNames.length - 1)
       const rightPaneMax = Math.max(0, models.length - 1)
 
-      // ── Edit mode: text input ────────────────────────────────────────────
-      if (state.setsEditMode) {
+      // ── Edit mode: text input (create/rename/duplicate) ───────────────────
+      if (state.setsEditMode && state.setsEditMode !== 'add-position-picker') {
         if (key.name === 'escape') {
           state.setsEditMode = null
           state.setsEditBuffer = ''
           return
         }
         if (key.name === 'return') {
-          await handleSetsEditConfirm(state, selectedSetName, setNames)
+          await handleSetsEditConfirm(state, selectedSetName, setNames, models)
           return
         }
         if (key.name === 'backspace') {
@@ -1515,6 +1573,31 @@ export function createKeyHandler(ctx) {
         const char = key.ctrl ? '' : (key.str || '').slice(-1)
         if (char && char.length === 1 && !key.ctrl && !key.meta) {
           state.setsEditBuffer += char
+        }
+        return
+      }
+
+      // ── Add-position-picker mode: choose insertion point then confirm ──────
+      if (state.setsEditMode === 'add-position-picker') {
+        if (key.name === 'escape') {
+          state.setsEditMode = null
+          state.setsAddPositionPickerOpen = false
+          state.setsAddSelectedModel = null
+          state.setsAddPositionCursor = -1
+          state.setsAddModelSearch = ''
+          return
+        }
+        if (key.name === 'return') {
+          await handleSetsEditConfirm(state, selectedSetName, setNames, models)
+          return
+        }
+        if (key.name === 'up' || key.name === 'k') {
+          state.setsAddPositionCursor = Math.max(-1, state.setsAddPositionCursor - 1)
+          return
+        }
+        if (key.name === 'down' || key.name === 'j') {
+          state.setsAddPositionCursor = Math.min(models.length - 1, state.setsAddPositionCursor + 1)
+          return
         }
         return
       }
@@ -2109,6 +2192,41 @@ export function createKeyHandler(ctx) {
       return
     }
 
+    // 📖 Token Usage overlay: Shift+T shows token history chart and today/all-time breakdowns.
+    if (state.tokenUsageOpen) {
+      if (key.ctrl && key.name === 'c') { exit(0); return }
+      const pageStep = Math.max(1, (state.terminalRows || 1) - 4)
+      if (key.name === 'escape') {
+        closeTokenUsageOverlay()
+        return
+      }
+      if (key.name === 'up' || key.name === 'k') {
+        state.tokenUsageScrollOffset = Math.max(0, state.tokenUsageScrollOffset - 1)
+        return
+      }
+      if (key.name === 'down' || key.name === 'j') {
+        state.tokenUsageScrollOffset += 1
+        return
+      }
+      if (key.name === 'pageup') {
+        state.tokenUsageScrollOffset = Math.max(0, state.tokenUsageScrollOffset - pageStep)
+        return
+      }
+      if (key.name === 'pagedown') {
+        state.tokenUsageScrollOffset += pageStep
+        return
+      }
+      if (key.name === 'home') {
+        state.tokenUsageScrollOffset = 0
+        return
+      }
+      if (key.name === 'end') {
+        state.tokenUsageScrollOffset = Number.MAX_SAFE_INTEGER
+        return
+      }
+      return
+    }
+
     // 📖 Changelog overlay: two-phase (index + details) with keyboard navigation
     if (state.changelogOpen) {
       const pageStep = Math.max(1, (state.terminalRows || 1) - 2)
@@ -2670,6 +2788,12 @@ export function createKeyHandler(ctx) {
     // 📖 Shift+A: add the selected model from the main table to a router set.
     if (key.name === 'a' && key.shift && !key.ctrl && !key.meta) {
       openRouterAddModelOverlay()
+      return
+    }
+
+    // 📖 Shift+T: open the Token Usage screen.
+    if (key.name === 't' && key.shift && !key.ctrl && !key.meta) {
+      openTokenUsageOverlay()
       return
     }
 

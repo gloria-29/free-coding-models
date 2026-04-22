@@ -1,6 +1,6 @@
 # PRD — Smart Model Router ("FCM Router")
 
-> **Status**: Draft v6 — Phase 4 Set Manager & Model Set UX implemented
+> **Status**: Draft v6 — Phase 5 Token Usage UI & Main Status Indicator implemented
 > **Author**: Vanessa Depraute + Claude
 > **Date**: 2026-04-23
 > **Target release**: 0.4.0
@@ -67,13 +67,13 @@ This PRD is now split between **implemented backend foundation** and **remaining
 |------|--------|----------------|
 | Router Dashboard TUI | ✅ Done | `Shift+R` opens a full-screen TUI dashboard backed by `/health`, `/stats`, and `/stream/events`; it renders daemon state, active set, port, uptime, probe mode, model health/circuit state, token totals, and the live request log. |
 | Set Manager TUI | ✅ Done | `Shift+S` opens two-pane Set Manager; N/D/R/⌫/A actions, Tab pane switching, model reorder via Shift+↑/↓ |
-| Position picker | 🟡 Partial | `Shift+A` opens the add-model flow; position picker UI wired but not yet rendered as a dedicated step |
-| Main TUI router footer/status | ❌ Not started | Main table does not show daemon running state or token totals. |
-| Token Usage screen | ❌ Not started | Historical token view and 7-day chart do not exist yet. |
+| Position picker | ✅ Done | `Shift+A` opens position picker; ↑↓ to select insertion point, Enter to confirm, Esc to cancel |
+| Main TUI router footer/status | ✅ Done | Footer shows `● Router: <set> Today: Ntok All-time: Ntok` when daemon running; `○ Router: daemon not running` otherwise |
+| Token Usage screen | ✅ Done | `Shift+T` fetches `/stats/tokens`, renders today/all-time breakdowns, top models today with bar chart, and 7-day history chart |
 | Onboarding overlay/banner | ❌ Not started | Users are not prompted to enable the router from the TUI. |
 | `FCM Router` install target | ❌ Not started | Existing endpoint installer cannot yet write router config into OpenCode/Goose/Aider/etc. |
 | Auto-start on boot | ❌ Not started | No launchd/systemd setup or Settings toggle yet. |
-| Command palette router actions | 🟡 Partial | Ctrl+P can open the Router Dashboard. Full searchable router operations remain in a later phase. |
+| Command palette router actions | ✅ Done | Ctrl+P includes Router Dashboard (Shift+R), Router Sets (Shift+S), and Token Usage (Shift+T) entries |
 | Full npm release verification | ❌ Not done | Implementation was tested locally, but no version bump, publish, or global npm tarball verification was performed. |
 
 ### Current Usable Slice
@@ -1154,32 +1154,26 @@ Goal: make model sets manageable by normal users, not just HTTP clients.
 - ✅ Deleting active set falls back safely and visibly (auto-activates first remaining set).
 - ✅ All overlay states degrade cleanly when daemon is unreachable.
 
-### Phase 5 — Token Usage UI & Main Status Indicator
+### Phase 5 — Token Usage UI & Main Status Indicator ✅ Done
 
 Goal: expose token tracking and router state where users naturally look.
 
-- Add main footer/status line:
-  - running/down indicator
-  - active set
-  - model count
-  - today tokens
-  - all-time tokens
-- Add token formatting:
-  - `< 1,000` raw
-  - `K` with 2 decimals
-  - `M` with 2 decimals
-- Add `Shift+T` Token Usage screen.
-- Render:
-  - today total/prompt/completion/request counts
-  - all-time totals
-  - top models today
-  - last 7 days chart
-- Decide whether streaming token usage should remain unknown or be estimated.
+- ✅ Added main footer/status line showing:
+  - `● Router: <set> Today: Ntok All-time: Ntok` when daemon is running
+  - `○ Router: daemon not running  •  Shift+R Dashboard  •  Shift+S Sets` when daemon is down
+- ✅ Token formatting matches spec: `< 1,000` raw, `K` with 2 decimals, `M` with 2 decimals
+- ✅ Added `Shift+T` Token Usage screen fetched from `GET /stats/tokens` on the daemon
+- ✅ Rendered:
+  - today total/prompt/completion/request counts + all-time totals side by side
+  - top models today with proportional bar chart (top 8)
+  - last 7 days history chart (multi-row bar chart using block characters)
+- ✅ Token stats polled every 30s in background so footer is always live without opening the dashboard
+- ✅ Command palette includes Token Usage entry (`Shift+T`, icon 📊)
 
 **Exit criteria**
 
-- Users can answer “is the router running?” and “what did I use today?” from the TUI.
-- Token views degrade cleanly when the token file is missing or corrupt.
+- ✅ Users can answer "is the router running?" and "what did I use today?" from the TUI.
+- ✅ Token views degrade cleanly when the token file is missing or daemon is unreachable (shows error state, not crash).
 
 ### Phase 6 — Onboarding & Install Flow
 

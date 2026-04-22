@@ -553,9 +553,24 @@ export async function runApp(cliArgs, config) {
     setsEditMode: null,           // 📖 null | 'create' | 'rename' | 'duplicate' | 'delete-confirm' | 'activate-confirm'
     setsEditBuffer: '',           // 📖 Typed text while in edit modes (new name, rename)
     setsAddPositionPickerOpen: false, // 📖 True when Shift+A triggered the position picker for adding a model
-    setsAddPositionCursor: 0,     // 📖 Cursor position in the add-model position picker
+    setsAddPositionCursor: 0,     // 📖 Cursor position in the add-model position picker (-1 = append at end)
     setsAddModelSearch: '',       // 📖 Search filter when adding models from catalog
+    setsAddSelectedModel: null,  // 📖 The model being added via Shift+A: { provider, model, label }
     setsLastFetchAt: 0,           // 📖 Timestamp of last GET /sets to avoid hammering the API
+    // 📖 Router footer data (polled every 30s from daemon when routerDashboardOpen has ever been true)
+    routerFooterActiveSet: null,  // 📖 Active set name from daemon
+    routerFooterRunning: false,  // 📖 True if daemon is reachable
+    routerFooterTodayTokens: 0,   // 📖 Today's total token usage
+    routerFooterAllTimeTokens: 0, // 📖 All-time total token usage
+    routerFooterRequests: 0,       // 📖 Today's request count
+    routerFooterLastFetchAt: 0,   // 📖 Timestamp of last stats fetch
+    routerFooterPollTimer: null,  // 📖 setInterval handle
+    // 📖 Token Usage overlay state (Shift+T opens it)
+    tokenUsageOpen: false,       // 📖 Whether the Token Usage overlay is active
+    tokenUsageData: null,        // 📖 Cached { today, all_time, daily7 } from /stats/tokens
+    tokenUsageError: null,        // 📖 Error message if fetch failed
+    tokenUsageScrollOffset: 0,   // 📖 Vertical scroll offset
+    tokenUsageLastFetchAt: 0,    // 📖 Timestamp of last fetch
     // 📖 Custom text filter (Ctrl+P palette → type text → Enter). Ephemeral — not saved to config.
     customTextFilter: null,       // 📖 Active free-text filter string (null = off). Matches model name, ctx, provider key/name.
   }
@@ -1094,7 +1109,12 @@ export async function runApp(cliArgs, config) {
           state.lastReleaseDate,
           state.footerHidden,
           state.verdictFilterMode,
-          state.healthFilterMode
+          state.healthFilterMode,
+          state.routerFooterRunning,
+          state.routerFooterActiveSet,
+          state.routerFooterTodayTokens,
+          state.routerFooterAllTimeTokens,
+          state.routerFooterRequests
         )
       }
       tableContent = state.commandPaletteFrozenTable
@@ -1132,7 +1152,12 @@ export async function runApp(cliArgs, config) {
         state.lastReleaseDate,
         state.footerHidden,
         state.verdictFilterMode,
-        state.healthFilterMode
+        state.healthFilterMode,
+        state.routerFooterRunning,
+        state.routerFooterActiveSet,
+        state.routerFooterTodayTokens,
+        state.routerFooterAllTimeTokens,
+        state.routerFooterRequests
       )
     }
 
@@ -1148,6 +1173,8 @@ export async function runApp(cliArgs, config) {
         ? overlays.renderRouterDashboard()
       : state.setsOpen
         ? overlays.renderSetsManager()
+      : state.tokenUsageOpen
+        ? overlays.renderTokenUsage()
       : state.incompatibleFallbackOpen
         ? overlays.renderIncompatibleFallback()
       : state.commandPaletteOpen
@@ -1267,6 +1294,48 @@ export async function runApp(cliArgs, config) {
       }
     } catch {}
   }, VERSION_RECHECK_INTERVAL_MS)
+
+  // 📖 Router footer stats: poll daemon every 30s so the main table footer always
+  // 📖 shows live token counts and daemon status even when the Router Dashboard is closed.
+  const ROUTER_FOOTER_POLL_INTERVAL_MS = 30_000
+  const ROUTER_FOOTER_FETCH_TIMEOUT_MS = 1200
+
+  async function fetchRouterFooterStats() {
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), ROUTER_FOOTER_FETCH_TIMEOUT_MS)
+      const pidPath = `${process.env.HOME}/.free-coding-models-daemon.pid`
+      const portPath = `${process.env.HOME}/.free-coding-models-daemon.port`
+      let port = 19280
+      try {
+        const { readFileSync: rfs } = await import('node:fs')
+        const savedPort = rfs(portPath, 'utf8').trim()
+        if (/^\d+$/.test(savedPort)) port = Number(savedPort)
+      } catch {}
+      const res = await globalThis.fetch(`http://127.0.0.1:${port}/stats`, {
+        signal: controller.signal,
+      })
+      clearTimeout(timer)
+      if (!res.ok) { state.routerFooterRunning = false; return }
+      const raw = await res.json()
+      const tokens = raw.tokens || {}
+      const today = tokens.today || {}
+      const allTime = tokens.all_time || {}
+      state.routerFooterRunning = true
+      state.routerFooterActiveSet = raw.activeSet || null
+      state.routerFooterTodayTokens = today.total_tokens || 0
+      state.routerFooterAllTimeTokens = allTime.total_tokens || 0
+      state.routerFooterRequests = today.requests || 0
+      state.routerFooterLastFetchAt = Date.now()
+    } catch {
+      state.routerFooterRunning = false
+    }
+  }
+
+  state.routerFooterPollTimer = setInterval(() => {
+    void fetchRouterFooterStats()
+  }, ROUTER_FOOTER_POLL_INTERVAL_MS)
+  void fetchRouterFooterStats() // 📖 Initial fetch immediately so footer is populated on first render
 
   // 📖 Keep interface running forever - user can select anytime or Ctrl+C to exit
   // 📖 The pings continue running in background with dynamic interval

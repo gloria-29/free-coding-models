@@ -209,6 +209,8 @@ const BASE_COMMAND_TREE = [
   { id: 'open-feedback', label: 'Feedback', shortcut: 'I', icon: '📝', type: 'page', description: 'Report bugs or requests', keywords: ['feedback', 'bug', 'request'] },
   { id: 'open-recommend', label: 'Smart recommend', shortcut: 'Q', icon: '🎯', type: 'page', description: 'Find best model for task', keywords: ['recommend', 'best model'] },
   { id: 'open-router-dashboard', label: 'Router dashboard', shortcut: 'Shift+R', icon: '🔀', type: 'page', description: 'Inspect daemon health, circuits, tokens, and request log', keywords: ['router', 'daemon', 'dashboard', 'health', 'stats', 'tokens', 'circuit'] },
+  { id: 'open-router-sets', label: 'Router sets', shortcut: 'Shift+S', icon: '📋', type: 'page', description: 'Manage router model sets — create, reorder, activate', keywords: ['router', 'sets', 'model', 'manager'] },
+  { id: 'open-token-usage', label: 'Token usage', shortcut: 'Shift+T', icon: '📊', type: 'page', description: 'View token usage history, 7-day chart, today/all-time totals', keywords: ['token', 'usage', 'chart', 'history', 'router'] },
   { id: 'open-install-endpoints', label: 'Install endpoints', icon: '🔌', type: 'page', description: 'Install provider catalogs', keywords: ['install', 'endpoints', 'providers'] },
   { id: 'open-installed-models', label: 'Installed models', icon: '🗂️', type: 'page', description: 'View models configured in tools', keywords: ['installed', 'models', 'configured', 'tools', 'manager', 'goose', 'crush', 'aider'] },
 ]

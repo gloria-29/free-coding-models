@@ -1527,12 +1527,45 @@ export function createOverlayRenderers(state, deps) {
     if (state.setsEditMode) {
       const editLabels = {
         create: 'Creating new set — enter name and press Enter',
-        rename: `Renaming set — enter new name`,
+        rename: 'Renaming set — enter new name',
         duplicate: 'Duplicating set — enter new name',
-        'delete-confirm': `Deleting set — press Enter to confirm`,
-        'activate-confirm': `Activating set — press Enter to confirm`,
+        'delete-confirm': 'Deleting set — press Enter to confirm',
+        'activate-confirm': 'Activating set — press Enter to confirm',
+        'add-position-picker': 'Adding model to set — choose position and press Enter',
       }
       lines.push(`  ${themeColors.warningBold('⚠')}  ${themeColors.warning(editLabels[state.setsEditMode] || 'Edit mode')}`)
+
+      // ── Add-position-picker: show model + insertion point list ─────────────
+      if (state.setsEditMode === 'add-position-picker') {
+        const m = state.setsAddSelectedModel
+        lines.push(`  ${themeColors.textBold('Model:')} ${m ? themeColors.info(`${m.provider}/${m.model}`) : themeColors.dim('(none)')}`)
+        lines.push(`  ${themeColors.textBold('Position:')} ${state.setsAddPositionCursor < 0 ? themeColors.success('→ Append at end') : `→ Insert at #${state.setsAddPositionCursor + 1}`}`)
+        lines.push('')
+        lines.push(`  ${themeColors.dim('Current set members:')}`)
+        // Show models with insertion point indicator
+        for (let i = 0; i < models.length; i++) {
+          const model = models[i]
+          const isAtCursor = i === state.setsAddPositionCursor
+          const marker = isAtCursor ? themeColors.successBold('❯ ') : '  '
+          const row = `${marker}${padEndDisplay(`#${i + 1}`, 3)} ${padEndDisplay(model.provider, 14)}  ${padEndDisplay(model.model, 30)}`
+          cursorLineByRow[i] = lines.length
+          lines.push(themeColors.dim(row))
+        }
+        const appendRow = `${models.length === 0 || state.setsAddPositionCursor < 0 ? themeColors.successBold('❯ ') : '  '}${padEndDisplay(`#${models.length + 1}`, 3)} ${themeColors.dim('(append at end)')}`
+        cursorLineByRow[models.length] = lines.length
+        lines.push(appendRow)
+        lines.push('')
+        lines.push(themeColors.dim('  ↑↓ Move position  •  Enter Confirm  •  Esc Cancel'))
+        // Scroll to show position picker
+        const targetLine = cursorLineByRow[state.setsAddPositionCursor < 0 ? models.length : state.setsAddPositionCursor] ?? 0
+        state.setsScrollOffset = keepOverlayTargetVisible(state.setsScrollOffset, targetLine, lines.length, state.terminalRows)
+        const { visible, offset } = sliceOverlayLines(lines, state.setsScrollOffset, state.terminalRows)
+        state.setsScrollOffset = offset
+        const tintedLines = tintOverlayLines(visible, themeColors.overlayBgSettings, state.terminalCols)
+        const cleared = tintedLines.map((l) => l + EL)
+        return cleared.join('\n')
+      }
+
       if (state.setsEditMode !== 'delete-confirm' && state.setsEditMode !== 'activate-confirm') {
         lines.push(`  ${themeColors.info('> ')}${state.setsEditBuffer}${themeColors.cursorBlink('▋')}`)
       }
@@ -1641,6 +1674,120 @@ export function createOverlayRenderers(state, deps) {
     return cleared.join('\n')
   }
 
+  // ─── Token Usage screen renderer ───────────────────────────────────────────
+  // 📖 renderTokenUsage: shows today/all-time breakdowns, by-model breakdown,
+  // 📖 and a 7-day bar chart. Triggered by Shift+T from the main table.
+  // 📖 Data fetched from GET /stats/tokens on the daemon.
+  function renderTokenUsage() {
+    const EL = '\x1b[K'
+    const lines = []
+    const cursorLineByRow = {}
+
+    lines.push('')
+    lines.push(`  ${themeColors.accent('🚀')} ${themeColors.accentBold('free-coding-models')} ${themeColors.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${themeColors.textBold('📊 Token Usage')}  ${themeColors.dim('Shift+T from main table')}`)
+    lines.push('')
+
+    const data = state.tokenUsageData
+
+    if (state.tokenUsageError) {
+      lines.push(`  ${themeColors.warning(state.tokenUsageError)}`)
+      lines.push('')
+      lines.push(themeColors.dim('  Press Shift+S to start the router daemon first, then reopen this screen.'))
+      lines.push(themeColors.dim('  Esc to return to the main table'))
+      const { visible, offset } = sliceOverlayLines(lines, state.tokenUsageScrollOffset, state.terminalRows)
+      state.tokenUsageScrollOffset = offset
+      const tintedLines = tintOverlayLines(visible, themeColors.overlayBgSettings, state.terminalCols)
+      return tintedLines.map((l) => l + EL).join('\n')
+    }
+
+    if (!data) {
+      lines.push(themeColors.dim('  Loading token stats...'))
+      const { visible, offset } = sliceOverlayLines(lines, state.tokenUsageScrollOffset, state.terminalRows)
+      state.tokenUsageScrollOffset = offset
+      const tintedLines = tintOverlayLines(visible, themeColors.overlayBgSettings, state.terminalCols)
+      return tintedLines.map((l) => l + EL).join('\n')
+    }
+
+    const today = data.today || {}
+    const allTime = data.all_time || {}
+    const dailyData = data.daily || {}
+
+    const todayTotal = today.total_tokens || 0
+    const todayPrompt = today.prompt_tokens || 0
+    const todayCompletion = today.completion_tokens || 0
+    const todayReq = today.requests || 0
+    const allTimeTotal = allTime.total_tokens || 0
+    const allTimeReq = allTime.requests || 0
+    const firstTracked = allTime.first_tracked || null
+
+    lines.push(`  ${themeColors.textBold('TODAY')}  ${themeColors.dim(new Date().toISOString().slice(0, 10))}  ${themeColors.dim('|')}  ${themeColors.textBold('ALL TIME')}`)
+    lines.push(`  ${themeColors.dim('─'.repeat(40))}  ${themeColors.dim('─'.repeat(30))}`)
+    lines.push(`  ${themeColors.textBold('Total:')}     ${themeColors.info(formatTokenTotalCompact(todayTotal))} tok  ${themeColors.dim('│')}  ${themeColors.textBold('Total:')}  ${themeColors.info(formatTokenTotalCompact(allTimeTotal))} tok`)
+    lines.push(`  ${themeColors.textBold('Prompt:')}   ${themeColors.dim(formatTokenTotalCompact(todayPrompt))} tok  ${themeColors.dim('│')}  ${themeColors.textBold('Requests:')} ${themeColors.dim(String(allTimeReq))}`)
+    lines.push(`  ${themeColors.textBold('Completion:')} ${themeColors.dim(formatTokenTotalCompact(todayCompletion))} tok  ${themeColors.dim('│')}  ${themeColors.textBold('Since:')} ${themeColors.dim(firstTracked ? new Date(firstTracked).toLocaleDateString() : '—')}`)
+    lines.push(`  ${themeColors.textBold('Requests:')} ${themeColors.dim(String(todayReq))}  ${themeColors.dim('│')}`)
+
+    const byModel = today.by_model || {}
+    const sortedModels = Object.entries(byModel)
+      .map(([key, val]) => {
+        const total = isRecord(val) ? (val.total || 0) : Number(val) || 0
+        return { key, total }
+      })
+      .filter((m) => m.total > 0)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 8)
+
+    lines.push('')
+    lines.push(`  ${themeColors.textBold('TOP MODELS TODAY')}`)
+    if (sortedModels.length === 0) {
+      lines.push(themeColors.dim('  No usage tracked yet today.'))
+    } else {
+      const maxTotal = sortedModels[0]?.total || 1
+      for (const m of sortedModels) {
+        const barLen = Math.max(2, Math.round((m.total / maxTotal) * 28))
+        const bar = themeColors.success('█'.repeat(barLen)) + themeColors.dim('░'.repeat(28 - barLen))
+        const pct = todayTotal > 0 ? Math.round((m.total / todayTotal) * 100) : 0
+        lines.push(`  ${bar}  ${themeColors.textBold(formatTokenTotalCompact(m.total))} tok  ${themeColors.dim(`${pct}%  ${m.key}`)}`)
+      }
+    }
+
+    lines.push('')
+    lines.push(`  ${themeColors.textBold('LAST 7 DAYS')}`)
+    const dayLabels = []
+    const dayTotals = []
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date()
+      d.setDate(d.getDate() - i)
+      const key = d.toISOString().slice(0, 10)
+      const dayData = dailyData[key]
+      const total = dayData?.total_tokens || 0
+      dayLabels.push(d.toLocaleDateString('en-US', { weekday: 'short' }))
+      dayTotals.push(total)
+    }
+    const maxDay = Math.max(...dayTotals, 1)
+    lines.push(`  ${dayLabels.map((l, i) => themeColors.dim(padEndDisplay(l, 6))).join(' ')}`)
+    const barHeights = [14, 10, 7, 4]
+    for (const bh of barHeights) {
+      const row = dayTotals.map((t) => {
+        const filled = Math.round((t / maxDay) * bh)
+        const bar = themeColors.info('█'.repeat(filled)) + themeColors.dim('░'.repeat(bh - filled))
+        return padEndDisplay(bar, 6)
+      })
+      lines.push(`  ${row.join(' ')}`)
+    }
+    const totalRow = dayTotals.map((t) => padEndDisplay(themeColors.textBold(formatTokenTotalCompact(t)), 6))
+    lines.push(`  ${totalRow.join(' ')}`)
+
+    lines.push('')
+    lines.push(themeColors.dim('  Esc Back to main table  •  Shift+R Router Dashboard'))
+
+    const { visible, offset } = sliceOverlayLines(lines, state.tokenUsageScrollOffset, state.terminalRows)
+    state.tokenUsageScrollOffset = offset
+    const tintedLines = tintOverlayLines(visible, themeColors.overlayBgSettings, state.terminalCols)
+    return tintedLines.map((l) => l + EL).join('\n')
+  }
+
   return {
     renderSettings,
     renderInstallEndpoints,
@@ -1654,8 +1801,9 @@ export function createOverlayRenderers(state, deps) {
     renderRouterDashboard,
     renderIncompatibleFallback,
     renderSetsManager,
+    renderTokenUsage,
     startRecommendAnalysis,
     stopRecommendAnalysis,
-    overlayLayout,  // 📖 Mouse support: exposes cursor-to-line maps for click handling
+    overlayLayout,
   }
 }
