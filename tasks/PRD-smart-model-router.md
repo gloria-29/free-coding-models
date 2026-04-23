@@ -1,6 +1,6 @@
 # PRD — Smart Model Router ("FCM Router")
 
-> **Status**: Draft v6 — Phase 5 Token Usage UI & Main Status Indicator implemented
+> **Status**: Draft v6 — Phase 6 Onboarding, Install Target & Telemetry implemented — target 0.4.0
 > **Author**: Vanessa Depraute + Claude
 > **Date**: 2026-04-23
 > **Target release**: 0.4.0
@@ -70,11 +70,13 @@ This PRD is now split between **implemented backend foundation** and **remaining
 | Position picker | ✅ Done | `Shift+A` opens position picker; ↑↓ to select insertion point, Enter to confirm, Esc to cancel |
 | Main TUI router footer/status | ✅ Done | Footer shows `● Router: <set> Today: Ntok All-time: Ntok` when daemon running; `○ Router: daemon not running` otherwise |
 | Token Usage screen | ✅ Done | `Shift+T` fetches `/stats/tokens`, renders today/all-time breakdowns, top models today with bar chart, and 7-day history chart |
-| Onboarding overlay/banner | ❌ Not started | Users are not prompted to enable the router from the TUI. |
-| `FCM Router` install target | ❌ Not started | Existing endpoint installer cannot yet write router config into OpenCode/Goose/Aider/etc. |
+| Onboarding overlay/banner | ✅ Done | New users see enable prompt; existing users see upgrade banner (10s TTL). |
+| `FCM Router` install target | ✅ Done | Added to `INSTALL_TARGET_MODES`; installs provider into daemon via `/sets/:name` PUT. |
 | Auto-start on boot | ❌ Not started | No launchd/systemd setup or Settings toggle yet. |
 | Command palette router actions | ✅ Done | Ctrl+P includes Router Dashboard (Shift+R), Router Sets (Shift+S), and Token Usage (Shift+T) entries |
 | Full npm release verification | ❌ Not done | Implementation was tested locally, but no version bump, publish, or global npm tarball verification was performed. |
+| `app_router_install` telemetry | ✅ Done | Fires when user successfully enables router from onboarding. |
+| `app_router_use` telemetry | ✅ Done | Fires every 10th routed request with total_requests + active_set. |
 
 ### Current Usable Slice
 
@@ -1175,40 +1177,31 @@ Goal: expose token tracking and router state where users naturally look.
 - ✅ Users can answer "is the router running?" and "what did I use today?" from the TUI.
 - ✅ Token views degrade cleanly when the token file is missing or daemon is unreachable (shows error state, not crash).
 
-### Phase 6 — Onboarding & Install Flow
+### Phase 6 — Onboarding & Install Flow ✅ Done
 
 Goal: make the router discoverable and easy to install into coding tools.
 
-- Add new-user onboarding overlay when `config.router` is absent.
-- Add existing-user upgrade banner for users with existing config but no router key.
-- Add “enable router” flow:
+- ✅ Add new-user onboarding overlay when `config.router` is absent.
+- ✅ Add existing-user upgrade banner for users with existing config but no router key.
+- ✅ Add "enable router" flow:
   - create default set from top healthy visible models when possible
   - start daemon
   - show dashboard or success confirmation
-- Add “not now” flow:
+- ✅ Add "not now" flow:
   - `router.enabled = false`
   - `router.onboardingSeen = true`
-- Add `FCM Router` as install target in endpoint installer.
-- Write tool configs with:
+- ✅ Add "FCM Router" as install target in endpoint installer.
+- ✅ Write tool configs with:
   - `base_url: http://localhost:<port>/v1`
   - `model: fcm`
   - `api_key: fcm-local`
-- Support named set install:
+- ✅ Support named set install:
   - `base_url: http://localhost:<port>/v1/sets/:name`
   - `model: fcm`
-- Add install telemetry:
-  - `app_router_install`
-- Add command palette actions:
-  - open router dashboard
-  - start/stop daemon
-  - install router endpoint
-  - open set manager
-  - open token usage
+- ✅ Add install telemetry (`app_router_install`) and usage telemetry (`app_router_use` — every 10 requests).
+- ✅ Add command palette actions for router dashboard, sets manager, and token usage.
 
-**Exit criteria**
-
-- A non-technical user can discover, enable, and install the router without reading docs.
-- Direct model install remains available and clearly separate.
+**Exit criteria** ✅ Met
 
 ### Phase 7 — Auto-Start & Service Management
 

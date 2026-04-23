@@ -50,10 +50,23 @@ import { sendUsageTelemetry } from './telemetry.js'
 
 export const ROUTER_DEFAULT_PORT = 19280
 export const ROUTER_MAX_PORT = 19289
-export const ROUTER_PID_PATH = join(homedir(), '.free-coding-models-daemon.pid')
-export const ROUTER_PORT_PATH = join(homedir(), '.free-coding-models-daemon.port')
-export const ROUTER_LOG_PATH = join(homedir(), '.free-coding-models-daemon.log')
-export const ROUTER_TOKENS_PATH = join(homedir(), '.free-coding-models-tokens.json')
+export const ROUTER_DEFAULT_PORT_DEV = 29280
+export const ROUTER_MAX_PORT_DEV = 29289
+
+// 📖 Dev mode uses -dev suffixed files so the local dev daemon never clashes
+// 📖 with a production install running on the same machine.
+const _dev = typeof process.env.FCM_DEV !== 'undefined' ? !!process.env.FCM_DEV : false
+export const ROUTER_PID_PATH = join(homedir(), `.free-coding-models-daemon${_dev ? '-dev' : ''}.pid`)
+export const ROUTER_PORT_PATH = join(homedir(), `.free-coding-models-daemon${_dev ? '-dev' : ''}.port`)
+export const ROUTER_LOG_PATH = join(homedir(), `.free-coding-models-daemon${_dev ? '-dev' : ''}.log`)
+export const ROUTER_TOKENS_PATH = join(homedir(), `.free-coding-models-tokens${_dev ? '-dev' : ''}.json`)
+
+// 📖 Returns effective port range for current mode (dev vs production)
+export function getRouterPortRange() {
+  return _dev
+    ? { defaultPort: ROUTER_DEFAULT_PORT_DEV, maxPort: ROUTER_MAX_PORT_DEV }
+    : { defaultPort: ROUTER_DEFAULT_PORT, maxPort: ROUTER_MAX_PORT }
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const CLI_ENTRY_PATH = join(__dirname, '..', 'bin', 'free-coding-models.js')
@@ -916,6 +929,12 @@ class RouterRuntime {
       this.markAuthError(key, 'missing API key')
       return
     }
+    // 📖 Guard: skip probe if the provider URL cannot be resolved (e.g. missing account ID)
+    const providerUrl = resolveProviderUrl(candidate.provider)
+    if (!providerUrl) {
+      this.markAuthError(key, 'provider URL unresolvable')
+      return
+    }
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 10000)
     const started = performance.now()
@@ -927,7 +946,7 @@ class RouterRuntime {
             headers: cloneHeadersForUpstream({}, apiKey, candidate.provider),
             signal: controller.signal,
           })
-        : await fetch(resolveProviderUrl(candidate.provider), {
+        : await fetch(providerUrl, {
             method: 'POST',
             headers: cloneHeadersForUpstream({}, apiKey, candidate.provider),
             body: JSON.stringify({
@@ -1089,6 +1108,13 @@ class RouterRuntime {
   async proxyJsonRequest({ req, res, body, candidate, requestId, attemptIndex }) {
     const key = candidate.key
     const apiKey = this.getApiKeyForProvider(candidate.provider)
+    // 📖 Guard: bail early if provider URL cannot be resolved
+    const providerUrl = resolveProviderUrl(candidate.provider)
+    if (!providerUrl) {
+      this.markFailure(key, 'provider URL unresolvable')
+      this.addRequestLog({ request_id: requestId, model: key, status: 'ERR', latency_ms: null, tokens: 0, failover: attemptIndex > 0, error: 'provider_url_unresolvable' })
+      return { done: false, failoverToNext: true, reason: 'provider_url_unresolvable' }
+    }
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), this.routerConfig().failover.requestTimeoutMs)
     const started = performance.now()
@@ -1099,7 +1125,7 @@ class RouterRuntime {
     }
     const clientAbort = attachClientAbort(req, res, controller)
     try {
-      const response = await fetch(resolveProviderUrl(candidate.provider), {
+      const response = await fetch(providerUrl, {
         method: 'POST',
         headers: {
           ...cloneHeadersForUpstream(req.headers, apiKey, candidate.provider),
@@ -1151,12 +1177,14 @@ class RouterRuntime {
           failover: attemptIndex > 0,
         })
         this.logger.info(`Routed to ${key} — ${latencyMs}ms`, { request_id: requestId, status: response.status })
-        res.writeHead(response.status, {
-          ...headerEntries(response.headers),
-          'x-fcm-router-model': key,
-          'x-request-id': requestId,
-        })
-        res.end(text)
+        if (!res.writableEnded) {
+          res.writeHead(response.status, {
+            ...headerEntries(response.headers),
+            'x-fcm-router-model': key,
+            'x-request-id': requestId,
+          })
+          res.end(text)
+        }
         return { done: true }
       }
 
@@ -1172,19 +1200,21 @@ class RouterRuntime {
         return { done: false, failoverToNext: true, reason: `http_${response.status}` }
       }
 
-      res.writeHead(response.status, {
-        ...headerEntries(response.headers),
-        'x-fcm-router-model': key,
-        'x-request-id': requestId,
-      })
-      res.end(text)
+      if (!res.writableEnded) {
+        res.writeHead(response.status, {
+          ...headerEntries(response.headers),
+          'x-fcm-router-model': key,
+          'x-request-id': requestId,
+        })
+        res.end(text)
+      }
       return { done: true }
     } catch (error) {
       if (clientAbort.aborted) {
         this.logger.info(`Client disconnected before upstream response from ${key}`, { request_id: requestId })
         return { done: true }
       }
-      const reason = error.name === 'AbortError' ? 'timeout' : error.message
+      const reason = error.name === 'AbortError' ? 'timeout' : (error.message || String(error))
       this.markFailure(key, reason)
       this.recordRouterError('upstream_transport_error', requestId, { model: key, reason })
       this.addRequestLog({ request_id: requestId, model: key, status: 'ERR', latency_ms: null, tokens: 0, failover: attemptIndex > 0, error: reason })
@@ -1198,6 +1228,13 @@ class RouterRuntime {
   async proxyStreamingRequest({ req, res, body, candidate, requestId, attemptIndex }) {
     const key = candidate.key
     const apiKey = this.getApiKeyForProvider(candidate.provider)
+    // 📖 Guard: bail early if provider URL cannot be resolved
+    const providerUrl = resolveProviderUrl(candidate.provider)
+    if (!providerUrl) {
+      this.markFailure(key, 'provider URL unresolvable')
+      this.addRequestLog({ request_id: requestId, model: key, status: 'ERR', latency_ms: null, tokens: 0, failover: attemptIndex > 0, error: 'provider_url_unresolvable', stream: true })
+      return { done: false, failoverToNext: true, reason: 'provider_url_unresolvable' }
+    }
     const controller = new AbortController()
     const started = performance.now()
     const upstreamBody = {
@@ -1209,7 +1246,7 @@ class RouterRuntime {
     let sentToClient = false
     const clientAbort = attachClientAbort(req, res, controller)
     try {
-      const response = await fetch(resolveProviderUrl(candidate.provider), {
+      const response = await fetch(providerUrl, {
         method: 'POST',
         headers: {
           ...cloneHeadersForUpstream(req.headers, apiKey, candidate.provider),
@@ -1237,12 +1274,14 @@ class RouterRuntime {
           this.addRequestLog({ request_id: requestId, model: key, status: response.status, latency_ms: latencyMs, tokens: 0, failover: attemptIndex > 0, error: `http_${response.status}`, stream: true })
           return { done: false, failoverToNext: true, reason: `http_${response.status}` }
         }
-        res.writeHead(response.status, {
-          ...headerEntries(response.headers),
-          'x-fcm-router-model': key,
-          'x-request-id': requestId,
-        })
-        res.end(await response.text())
+        if (!res.writableEnded) {
+          res.writeHead(response.status, {
+            ...headerEntries(response.headers),
+            'x-fcm-router-model': key,
+            'x-request-id': requestId,
+          })
+          try { res.end(await response.text()) } catch {}
+        }
         return { done: true }
       }
 
@@ -1253,17 +1292,19 @@ class RouterRuntime {
       }
 
       const firstChunk = await this.readStreamChunkWithTimeout(reader)
-      if (firstChunk.done) {
+      if (firstChunk.done || !firstChunk.value) {
         this.markFailure(key, 'stream ended before first chunk')
         return { done: false, failoverToNext: true, reason: 'empty_stream' }
       }
-      const firstChunkBuffer = Buffer.from(firstChunk.value)
+      // 📖 Guard: ensure value is a valid buffer source before conversion
+      const firstChunkBuffer = Buffer.isBuffer(firstChunk.value) ? firstChunk.value : Buffer.from(firstChunk.value)
       if (isLikelyHtmlText(firstChunkBuffer.toString('utf8'))) {
         this.markFailure(key, 'upstream_html_maintenance', 503, upstreamMeta)
         this.recordRouterError('upstream_html_maintenance', requestId, { model: key, status: response.status, stream: true })
         return { done: false, failoverToNext: true, reason: 'upstream_html_maintenance' }
       }
 
+      if (res.writableEnded) return { done: true }
       res.writeHead(response.status, {
         ...headerEntries(response.headers),
         'x-fcm-router-model': key,
@@ -1274,8 +1315,10 @@ class RouterRuntime {
 
       while (!res.writableEnded) {
         const chunk = await this.readStreamChunkWithTimeout(reader)
-        if (chunk.done) break
-        res.write(Buffer.from(chunk.value))
+        if (chunk.done || !chunk.value) break
+        // 📖 Guard: ensure chunk value is safe for Buffer conversion
+        const buf = Buffer.isBuffer(chunk.value) ? chunk.value : Buffer.from(chunk.value)
+        res.write(buf)
       }
 
       this.markSuccess(key, latencyMs)
@@ -1289,20 +1332,21 @@ class RouterRuntime {
         failover: attemptIndex > 0,
         stream: true,
       })
-      res.end()
+      if (!res.writableEnded) res.end()
       return { done: true }
     } catch (error) {
-      controller.abort()
+      try { controller.abort() } catch {}
       if (clientAbort.aborted) {
         this.logger.info(`Client disconnected during streaming response from ${key}`, { request_id: requestId })
         return { done: true }
       }
-      const reason = error.name === 'AbortError' ? 'timeout' : error.message
+      const reason = error.name === 'AbortError' ? 'timeout' : (error.message || String(error))
       this.markFailure(key, reason)
       this.recordRouterError('upstream_stream_error', requestId, { model: key, reason, partial: sentToClient })
+      this.addRequestLog({ request_id: requestId, model: key, status: 'ERR', latency_ms: null, tokens: 0, failover: attemptIndex > 0, error: reason, stream: true })
       if (sentToClient) {
         this.logger.warn(`Streaming failure after partial response from ${key}`, { request_id: requestId, reason })
-        try { res.end() } catch {}
+        try { if (!res.writableEnded) res.end() } catch {}
         return { done: true }
       }
       return { done: false, failoverToNext: true, reason }
@@ -1527,9 +1571,11 @@ class RouterRuntime {
         sendError(res, 400, 'Invalid JSON', 'invalid_request_error', 'invalid_json', requestId, { detail: error.message })
         return
       }
-      this.logger.error('Internal router error', { request_id: requestId, error: error.stack || error.message })
-      this.recordRouterError('internal_router_error', requestId, { message: error.message })
-      sendError(res, 500, 'Internal router error', 'server_error', 'internal_router_error', requestId)
+      this.logger.error('Internal router error', { request_id: requestId, error: error?.stack || error?.message || String(error) })
+      this.recordRouterError('internal_router_error', requestId, { message: error?.message || String(error) })
+      if (!res.writableEnded) {
+        sendError(res, 500, 'Internal router error', 'server_error', 'internal_router_error', requestId)
+      }
     }
   }
 
@@ -1555,7 +1601,13 @@ class RouterRuntime {
     })
     process.on('unhandledRejection', (reason) => {
       this.crashRecovered += 1
+      this.uncaughtTimestamps.push(Date.now())
+      this.uncaughtTimestamps = this.uncaughtTimestamps.filter((ts) => Date.now() - ts < 5 * 60 * 1000)
       this.logger.error('Recovered unhandled rejection', { error: reason?.stack || String(reason) })
+      if (this.uncaughtTimestamps.length >= 10) {
+        this.logger.error('Too many uncaught exceptions/rejections; shutting down for external restart')
+        void this.shutdown(1)
+      }
     })
     process.on('SIGTERM', () => void this.shutdown(0))
     process.on('SIGINT', () => void this.shutdown(0))
@@ -1687,11 +1739,12 @@ function listenOnPort(server, port) {
 }
 
 async function listenWithFallback(server, preferredPort, logger) {
-  const start = Math.max(1, preferredPort || ROUTER_DEFAULT_PORT)
+  const { defaultPort, maxPort } = getRouterPortRange()
+  const start = Math.max(1, preferredPort || defaultPort)
   const candidates = []
-  for (let port = start; port <= ROUTER_MAX_PORT; port += 1) candidates.push(port)
-  if (!candidates.includes(ROUTER_DEFAULT_PORT)) {
-    for (let port = ROUTER_DEFAULT_PORT; port <= ROUTER_MAX_PORT; port += 1) candidates.push(port)
+  for (let port = start; port <= maxPort; port += 1) candidates.push(port)
+  if (!candidates.includes(defaultPort)) {
+    for (let port = defaultPort; port <= maxPort; port += 1) candidates.push(port)
   }
   let lastError = null
   for (const port of candidates) {
@@ -1740,10 +1793,11 @@ export async function runRouterDaemon() {
 }
 
 export async function getRouterDaemonStatus() {
+  const { defaultPort, maxPort } = getRouterPortRange()
   const ports = []
   const recordedPort = readNumberFile(ROUTER_PORT_PATH)
   if (recordedPort) ports.push(recordedPort)
-  for (let port = ROUTER_DEFAULT_PORT; port <= ROUTER_MAX_PORT; port += 1) {
+  for (let port = defaultPort; port <= maxPort; port += 1) {
     if (!ports.includes(port)) ports.push(port)
   }
   for (const port of ports) {

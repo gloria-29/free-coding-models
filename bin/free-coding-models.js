@@ -4,6 +4,11 @@
  * @description Live terminal availability checker for coding LLM models with OpenCode & OpenClaw integration.
  */
 
+// 📖 --dev mode: must set FCM_DEV before any module imports resolve daemon paths
+if (process.argv.includes('--dev')) {
+  process.env.FCM_DEV = '1'
+}
+
 import chalk from 'chalk';
 import { parseArgs, TIER_LETTER_MAP } from '../src/utils.js';
 import { loadConfig } from '../src/config.js';

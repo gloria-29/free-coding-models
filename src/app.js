@@ -580,6 +580,7 @@ export async function runApp(cliArgs, config) {
     // 📖 Router upgrade banner (shown once to existing users who haven't seen router)
     routerUpgradeBannerShownAt: 0, // 📖 Timestamp when banner was shown (0 = not shown)
     routerUpgradeBannerDismissedAt: 0, // 📖 Timestamp when banner was dismissed (0 = not dismissed)
+    routerDashboardEverOpened: false, // 📖 Set to true the first time dashboard opens (used for upgrade-path telemetry)
     // 📖 Custom text filter (Ctrl+P palette → type text → Enter). Ephemeral — not saved to config.
     customTextFilter: null,       // 📖 Active free-text filter string (null = off). Matches model name, ctx, provider key/name.
   }
@@ -1360,7 +1361,8 @@ export async function runApp(cliArgs, config) {
   const isFirstLaunch = !routerCfg
   const isUpgrade = routerCfg && routerCfg.onboardingSeen !== true
   const alreadyEnabled = routerCfg?.enabled === true
-  if (isFirstLaunch || (isUpgrade && !alreadyEnabled)) {
+  const forceOnboarding = cliArgs?.devMode === true
+  if (forceOnboarding || isFirstLaunch || (isUpgrade && !alreadyEnabled)) {
     state.routerOnboardingOpen = true
     state.routerOnboardingCursor = 0
     state.routerOnboardingPhase = 'ask'

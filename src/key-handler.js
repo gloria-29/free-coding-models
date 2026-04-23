@@ -958,11 +958,15 @@ export function createKeyHandler(ctx) {
     state.setsEditBuffer = ''
     state.setsError = null
     state.setsLastFetchAt = 0
-    void fetchRouterSets(state, { fetchFn })
+    // 📖 Initialize setsData defensively so the overlay never renders against undefined
+    if (!state.setsData) state.setsData = { sets: {}, activeSet: null }
+    void fetchRouterSets(state, { fetchFn: globalThis.fetch }).catch(() => {
+      state.setsError = 'Failed to connect to router daemon'
+    })
   }
 
   function openRouterAddModelOverlay() {
-    const selected = state.visibleSorted[state.cursor]
+    const selected = state.visibleSorted?.[state.cursor]
     if (!selected) return
     state.setsAddSelectedModel = {
       provider: selected.providerKey,
@@ -979,7 +983,11 @@ export function createKeyHandler(ctx) {
     state.setsEditMode = 'add-position-picker'
     state.setsEditBuffer = ''
     state.setsError = null
-    void fetchRouterSets(state, { fetchFn })
+    // 📖 Initialize setsData defensively before fetching
+    if (!state.setsData) state.setsData = { sets: {}, activeSet: null }
+    void fetchRouterSets(state, { fetchFn: globalThis.fetch }).catch(() => {
+      state.setsError = 'Failed to connect to router daemon'
+    })
   }
 
   // 📖 Token Usage screen — Shift+T from main table. Fetches daily token history
@@ -1007,8 +1015,13 @@ export function createKeyHandler(ctx) {
         state.tokenUsageError = `Daemon returned HTTP ${res.status} — is the router running?`
         return
       }
-      const raw = await res.json()
-      state.tokenUsageData = raw
+      // 📖 Guard: res.json() can throw on malformed response body
+      const text = await res.text()
+      try {
+        state.tokenUsageData = JSON.parse(text)
+      } catch {
+        state.tokenUsageError = 'Daemon returned invalid JSON — try restarting the daemon'
+      }
     } catch (err) {
       state.tokenUsageError = err?.name === 'AbortError' ? 'Request timed out — is the router daemon running?' : (err?.message || 'Failed to fetch token stats')
     }
@@ -1021,57 +1034,63 @@ export function createKeyHandler(ctx) {
   }
 
   // 📖 Handles all Set Manager edit mode confirmations (create/rename/duplicate/delete/activate/add-model).
+  // 📖 Wrapped in a top-level try/catch so unexpected fetch/network errors never crash the TUI.
   async function handleSetsEditConfirm(localState, selectedSetName, allSetNames, models) {
     const mode = localState.setsEditMode
-    const buffer = localState.setsEditBuffer.trim()
+    const buffer = (localState.setsEditBuffer || '').trim()
     localState.setsEditMode = null
     localState.setsEditBuffer = ''
+    const fetchFn = globalThis.fetch
 
-    if (mode === 'create') {
-      if (!buffer) { localState.setsError = 'Set name cannot be empty'; return }
-      const result = await createRouterSet(localState, buffer, { fetchFn })
-      if (!result.ok) localState.setsError = result.error || 'Failed to create set'
-      return
-    }
-    if (mode === 'rename') {
-      if (!buffer || !selectedSetName) { localState.setsError = 'Invalid rename'; return }
-      if (allSetNames.includes(buffer) && buffer !== selectedSetName) { localState.setsError = 'A set with that name already exists'; return }
-      const result = await renameRouterSet(localState, selectedSetName, buffer, { fetchFn })
-      if (!result.ok) localState.setsError = result.error || 'Failed to rename set'
-      return
-    }
-    if (mode === 'duplicate') {
-      if (!buffer || !selectedSetName) { localState.setsError = 'Invalid duplicate'; return }
-      if (allSetNames.includes(buffer)) { localState.setsError = 'A set with that name already exists'; return }
-      const result = await duplicateRouterSet(localState, selectedSetName, buffer, { fetchFn })
-      if (!result.ok) localState.setsError = result.error || 'Failed to duplicate set'
-      return
-    }
-    if (mode === 'delete-confirm') {
-      if (!selectedSetName) return
-      const result = await deleteRouterSet(localState, selectedSetName, { fetchFn })
-      if (!result.ok) { localState.setsError = result.error || 'Failed to delete set'; return }
-      localState.setsCursor = Math.max(0, localState.setsCursor - 1)
-      return
-    }
-    if (mode === 'activate-confirm') {
-      if (!selectedSetName) return
-      const result = await activateRouterSet(localState, selectedSetName, { fetchFn })
-      if (!result.ok) { localState.setsError = result.error || 'Failed to activate set'; return }
-      return
-    }
-    if (mode === 'add-position-picker') {
-      const candidate = localState.setsAddSelectedModel
-      if (!candidate || !selectedSetName) { localState.setsError = 'No model or set selected'; return }
-      const priority = localState.setsAddPositionCursor >= 0
-        ? localState.setsAddPositionCursor + 1
-        : (models.length || 0) + 1
-      const result = await addModelToRouterSet(localState, selectedSetName, candidate.provider, candidate.model, priority, { fetchFn })
-      if (!result.ok) { localState.setsError = result.error || 'Failed to add model'; return }
-      localState.setsAddPositionPickerOpen = false
-      localState.setsAddSelectedModel = null
-      localState.setsEditMode = null
-      return
+    try {
+      if (mode === 'create') {
+        if (!buffer) { localState.setsError = 'Set name cannot be empty'; return }
+        const result = await createRouterSet(localState, buffer, { fetchFn })
+        if (!result.ok) localState.setsError = result.error || 'Failed to create set'
+        return
+      }
+      if (mode === 'rename') {
+        if (!buffer || !selectedSetName) { localState.setsError = 'Invalid rename'; return }
+        if (allSetNames.includes(buffer) && buffer !== selectedSetName) { localState.setsError = 'A set with that name already exists'; return }
+        const result = await renameRouterSet(localState, selectedSetName, buffer, { fetchFn })
+        if (!result.ok) localState.setsError = result.error || 'Failed to rename set'
+        return
+      }
+      if (mode === 'duplicate') {
+        if (!buffer || !selectedSetName) { localState.setsError = 'Invalid duplicate'; return }
+        if (allSetNames.includes(buffer)) { localState.setsError = 'A set with that name already exists'; return }
+        const result = await duplicateRouterSet(localState, selectedSetName, buffer, { fetchFn })
+        if (!result.ok) localState.setsError = result.error || 'Failed to duplicate set'
+        return
+      }
+      if (mode === 'delete-confirm') {
+        if (!selectedSetName) return
+        const result = await deleteRouterSet(localState, selectedSetName, { fetchFn })
+        if (!result.ok) { localState.setsError = result.error || 'Failed to delete set'; return }
+        localState.setsCursor = Math.max(0, localState.setsCursor - 1)
+        return
+      }
+      if (mode === 'activate-confirm') {
+        if (!selectedSetName) return
+        const result = await activateRouterSet(localState, selectedSetName, { fetchFn })
+        if (!result.ok) { localState.setsError = result.error || 'Failed to activate set'; return }
+        return
+      }
+      if (mode === 'add-position-picker') {
+        const candidate = localState.setsAddSelectedModel
+        if (!candidate || !selectedSetName) { localState.setsError = 'No model or set selected'; return }
+        const priority = localState.setsAddPositionCursor >= 0
+          ? localState.setsAddPositionCursor + 1
+          : (models.length || 0) + 1
+        const result = await addModelToRouterSet(localState, selectedSetName, candidate.provider, candidate.model, priority, { fetchFn })
+        if (!result.ok) { localState.setsError = result.error || 'Failed to add model'; return }
+        localState.setsAddPositionPickerOpen = false
+        localState.setsAddSelectedModel = null
+        localState.setsEditMode = null
+        return
+      }
+    } catch (err) {
+      localState.setsError = err?.message || 'An unexpected error occurred'
     }
   }
 
@@ -1522,11 +1541,11 @@ export function createKeyHandler(ctx) {
         return
       }
       if (key.name === 's') {
-        await cycleRouterDashboardActiveSet(state)
+        try { await cycleRouterDashboardActiveSet(state) } catch {}
         return
       }
       if (key.name === 'i') {
-        await cycleRouterDashboardProbeMode(state)
+        try { await cycleRouterDashboardProbeMode(state) } catch {}
         return
       }
       if (key.name === 'r') {
@@ -1573,7 +1592,7 @@ export function createKeyHandler(ctx) {
           return
         }
         if (key.ctrl || key.meta) return
-        const char = key.ctrl ? '' : (key.str || '').slice(-1)
+        const char = key.ctrl ? '' : (str || '').slice(-1)
         if (char && char.length === 1 && !key.ctrl && !key.meta) {
           state.setsEditBuffer += char
         }
@@ -1614,6 +1633,9 @@ export function createKeyHandler(ctx) {
       // ── Tab: switch focus between left (sets) and right (models) panes ────
       if (key.name === 'tab') {
         state.setsActivePane = state.setsActivePane === 'sets' ? 'models' : 'sets'
+        // 📖 Clamp cursor to the new pane's bounds to prevent out-of-range access
+        const newMax = state.setsActivePane === 'sets' ? leftPaneMax : rightPaneMax
+        state.setsCursor = Math.min(state.setsCursor, Math.max(0, newMax))
         return
       }
 
@@ -1682,8 +1704,12 @@ export function createKeyHandler(ctx) {
           // Remove model from set
           const m = models[state.setsCursor]
           if (!m || !selectedSetName) return
-          const result = await removeModelFromRouterSet(state, selectedSetName, m.provider, m.model)
-          if (!result.ok) state.setsError = result.error || 'Failed to remove model'
+          try {
+            const result = await removeModelFromRouterSet(state, selectedSetName, m.provider, m.model)
+            if (!result.ok) state.setsError = result.error || 'Failed to remove model'
+          } catch (err) {
+            state.setsError = err?.message || 'Failed to remove model'
+          }
           return
         }
       }
@@ -1700,15 +1726,23 @@ export function createKeyHandler(ctx) {
       if (key.shift && (key.name === 'up' || key.name === 'arrowup')) {
         const m = models[state.setsCursor]
         if (!m || !selectedSetName) return
-        const result = await reorderRouterSetModel(state, selectedSetName, m.provider, m.model, 'up')
-        if (!result.ok) state.setsError = result.error || 'Failed to reorder'
+        try {
+          const result = await reorderRouterSetModel(state, selectedSetName, m.provider, m.model, 'up')
+          if (!result.ok) state.setsError = result.error || 'Failed to reorder'
+        } catch (err) {
+          state.setsError = err?.message || 'Failed to reorder'
+        }
         return
       }
       if (key.shift && (key.name === 'down' || key.name === 'arrowdown')) {
         const m = models[state.setsCursor]
         if (!m || !selectedSetName) return
-        const result = await reorderRouterSetModel(state, selectedSetName, m.provider, m.model, 'down')
-        if (!result.ok) state.setsError = result.error || 'Failed to reorder'
+        try {
+          const result = await reorderRouterSetModel(state, selectedSetName, m.provider, m.model, 'down')
+          if (!result.ok) state.setsError = result.error || 'Failed to reorder'
+        } catch (err) {
+          state.setsError = err?.message || 'Failed to reorder'
+        }
         return
       }
 

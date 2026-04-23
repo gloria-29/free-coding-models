@@ -41,9 +41,10 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { displayWidth, padEndDisplay, sliceOverlayLines, tintOverlayLines } from './render-helpers.js'
-import { ROUTER_DEFAULT_PORT, ROUTER_MAX_PORT, ROUTER_PID_PATH, ROUTER_PORT_PATH } from './router-daemon.js'
+import { ROUTER_DEFAULT_PORT, ROUTER_MAX_PORT, ROUTER_PID_PATH, ROUTER_PORT_PATH, getRouterPortRange } from './router-daemon.js'
 import { themeColors } from './theme.js'
 import { formatTokenTotalCompact } from './token-usage-reader.js'
+import { sendUsageTelemetry } from './telemetry.js'
 
 export const ROUTER_DASHBOARD_POLL_INTERVAL_MS = 2000
 export const ROUTER_DASHBOARD_FETCH_TIMEOUT_MS = 1200
@@ -166,10 +167,11 @@ function buildPortCandidates(state) {
     : null
   const baseUrlPort = baseUrlMatch ? Number.parseInt(baseUrlMatch[1], 10) : null
   const filePort = readNumberFile(ROUTER_PORT_PATH)
-  for (const port of [baseUrlPort, currentPort, filePort, ROUTER_DEFAULT_PORT]) {
+  const { defaultPort, maxPort } = getRouterPortRange()
+  for (const port of [baseUrlPort, currentPort, filePort, defaultPort]) {
     if (Number.isInteger(port) && port > 0 && !ports.includes(port)) ports.push(port)
   }
-  for (let port = ROUTER_DEFAULT_PORT; port <= ROUTER_MAX_PORT; port += 1) {
+  for (let port = defaultPort; port <= maxPort; port += 1) {
     if (!ports.includes(port)) ports.push(port)
   }
   return ports
@@ -377,7 +379,16 @@ export async function refreshRouterDashboardSnapshot(state, options = {}) {
     state.routerDashboardStatus = 'loading'
   }
 
-  const discovery = await discoverRouterDashboard(state, fetchFn)
+  let discovery
+  try {
+    discovery = await discoverRouterDashboard(state, fetchFn)
+  } catch (err) {
+    // 📖 Guard: if discovery itself throws (e.g. fetchFn not callable), degrade gracefully
+    state.routerDashboardStatus = 'unreachable'
+    state.routerDashboardError = err?.message || 'Discovery failed unexpectedly'
+    state.routerDashboardLastUpdatedAt = Date.now()
+    return normalizeRouterDashboardSnapshot(null, null)
+  }
   if (!discovery.baseUrl) {
     state.routerDashboardBaseUrl = null
     state.routerDashboardPort = discovery.port
@@ -496,6 +507,15 @@ export function openRouterDashboardOverlay(state) {
   state.routerDashboardScrollOffset = 0
   state.routerDashboardStatus = state.routerDashboardStatus || 'loading'
   startRouterDashboardPolling(state)
+  // 📖 Fire app_router_install on first Shift+R dashboard open for upgrade-path users
+  if (!state.routerDashboardEverOpened && state.config?.router) {
+    state.routerDashboardEverOpened = true
+    void sendUsageTelemetry(state.config, {}, {
+      event: 'app_router_install',
+      mode: 'dashboard',
+      properties: { router_version: '0.4.0', trigger: 'upgrade_path' },
+    })
+  }
 }
 
 export function closeRouterDashboardOverlay(state) {
@@ -804,6 +824,9 @@ export function renderRouterDashboard(state, deps = {}) {
   if (state.routerDashboardEventError) lines.push(`  ${themeColors.warning(`Event stream: ${state.routerDashboardEventError}`)}`)
   const notice = renderNotice(state.routerDashboardNotice)
   if (notice) lines.push(notice)
+  if (snapshot.setCount === 0) {
+    lines.push(`  ${themeColors.warningBold('⚠ No router sets found. Press Y to install providers into FCM Router, then restart the daemon.')}`)
+  }
   lines.push(`  ${separator}`)
   lines.push('')
 

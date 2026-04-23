@@ -279,7 +279,7 @@ free-coding-models --daemon-status
 free-coding-models --daemon-stop
 ```
 
-Inside the TUI, press **`Shift+R`** to open the Router Dashboard. It polls `/health` and `/stats`, listens to `/stream/events`, and shows daemon state, active set, probe mode, circuit breaker health, token totals, and the live routed-request log.
+Inside the TUI, press **`Shift+R`** to open the Router Dashboard. It polls `/health` and `/stats`, listens to `/stream/events`, and shows daemon state, active set, probe mode, circuit breaker health, token totals, and the live routed request log.
 
 Dashboard keys:
 
@@ -291,6 +291,14 @@ Dashboard keys:
 | `R` | Reserved for Phase 7 service-manager restart |
 | `P` | Reserved until probe pause/resume backend support exists |
 | `Esc` | Return to the main model table |
+
+Press **`Shift+S`** to open the Set Manager — create, rename, duplicate, delete model sets, and reorder models within each set with `Shift+↑` / `Shift+↓`.
+
+Press **`Shift+T`** to open the Token Usage screen — shows today/all-time token totals and a 7-day history chart with top models per day.
+
+When you first start the TUI with no router configured, an onboarding prompt appears asking if you want to enable the Smart Router. Existing users who haven't yet opted in see a dismissable upgrade banner at the top of the table.
+
+**`Shift+A`** opens the position picker — navigate where a model lands in the priority order within a set.
 
 Configure tools with:
 

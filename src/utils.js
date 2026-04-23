@@ -465,6 +465,7 @@ export function parseArgs(argv) {
   const geminiMode = flags.includes('--gemini')
   const jcodeMode = flags.includes('--jcode')
   const noTelemetry = flags.includes('--no-telemetry')
+  const devMode = flags.includes('--dev')
   const jsonMode = flags.includes('--json')
   const helpMode = flags.includes('--help') || flags.includes('-h')
   const premiumMode = flags.includes('--premium')
@@ -534,6 +535,7 @@ export function parseArgs(argv) {
     daemonStatusMode,
     // 📖 Profile system removed - API keys now persist permanently across all sessions
     recommendMode,
+    devMode,
   }
 }
 

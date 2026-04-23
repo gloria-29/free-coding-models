@@ -1538,26 +1538,30 @@ export function createOverlayRenderers(state, deps) {
       // ── Add-position-picker: show model + insertion point list ─────────────
       if (state.setsEditMode === 'add-position-picker') {
         const m = state.setsAddSelectedModel
+        // 📖 Resolve models early — the outer `models` const lives after this block
+        const pickerSetName = setNames[state.setsCursor] ?? null
+        const pickerSet = pickerSetName ? (sets[pickerSetName] || null) : null
+        const pickerModels = pickerSet?.models || []
         lines.push(`  ${themeColors.textBold('Model:')} ${m ? themeColors.info(`${m.provider}/${m.model}`) : themeColors.dim('(none)')}`)
         lines.push(`  ${themeColors.textBold('Position:')} ${state.setsAddPositionCursor < 0 ? themeColors.success('→ Append at end') : `→ Insert at #${state.setsAddPositionCursor + 1}`}`)
         lines.push('')
         lines.push(`  ${themeColors.dim('Current set members:')}`)
         // Show models with insertion point indicator
-        for (let i = 0; i < models.length; i++) {
-          const model = models[i]
+        for (let i = 0; i < pickerModels.length; i++) {
+          const model = pickerModels[i]
           const isAtCursor = i === state.setsAddPositionCursor
           const marker = isAtCursor ? themeColors.successBold('❯ ') : '  '
           const row = `${marker}${padEndDisplay(`#${i + 1}`, 3)} ${padEndDisplay(model.provider, 14)}  ${padEndDisplay(model.model, 30)}`
           cursorLineByRow[i] = lines.length
           lines.push(themeColors.dim(row))
         }
-        const appendRow = `${models.length === 0 || state.setsAddPositionCursor < 0 ? themeColors.successBold('❯ ') : '  '}${padEndDisplay(`#${models.length + 1}`, 3)} ${themeColors.dim('(append at end)')}`
-        cursorLineByRow[models.length] = lines.length
+        const appendRow = `${pickerModels.length === 0 || state.setsAddPositionCursor < 0 ? themeColors.successBold('❯ ') : '  '}${padEndDisplay(`#${pickerModels.length + 1}`, 3)} ${themeColors.dim('(append at end)')}`
+        cursorLineByRow[pickerModels.length] = lines.length
         lines.push(appendRow)
         lines.push('')
         lines.push(themeColors.dim('  ↑↓ Move position  •  Enter Confirm  •  Esc Cancel'))
         // Scroll to show position picker
-        const targetLine = cursorLineByRow[state.setsAddPositionCursor < 0 ? models.length : state.setsAddPositionCursor] ?? 0
+        const targetLine = cursorLineByRow[state.setsAddPositionCursor < 0 ? pickerModels.length : state.setsAddPositionCursor] ?? 0
         state.setsScrollOffset = keepOverlayTargetVisible(state.setsScrollOffset, targetLine, lines.length, state.terminalRows)
         const { visible, offset } = sliceOverlayLines(lines, state.setsScrollOffset, state.terminalRows)
         state.setsScrollOffset = offset
@@ -1567,7 +1571,7 @@ export function createOverlayRenderers(state, deps) {
       }
 
       if (state.setsEditMode !== 'delete-confirm' && state.setsEditMode !== 'activate-confirm') {
-        lines.push(`  ${themeColors.info('> ')}${state.setsEditBuffer}${themeColors.cursorBlink('▋')}`)
+        lines.push(`  ${themeColors.info('> ')}${state.setsEditBuffer}${themeColors.accentBold('▋')}`)
       }
       lines.push('')
     }
@@ -1589,7 +1593,7 @@ export function createOverlayRenderers(state, deps) {
     // ── Edit mode: show input row instead of set list ────────────────────────
     if (state.setsEditMode === 'create') {
       const isCursor = state.setsActivePane !== 'sets'
-      const row = `${bullet(isCursor)}${themeColors.textBold('New set: ')}${state.setsEditBuffer}${themeColors.cursorBlink('▋')}`
+      const row = `${bullet(isCursor)}${themeColors.textBold('New set: ')}${state.setsEditBuffer}${themeColors.accentBold('▋')}`
       cursorLineByRow[0] = lines.length
       lines.push(isCursor ? themeColors.bgCursorInstall(row) : row)
     } else {
@@ -1613,7 +1617,9 @@ export function createOverlayRenderers(state, deps) {
     lines.push('')
 
     // ── Right pane: models in selected set ──────────────────────────────────
-    const selectedSetName = state.setsCursor < setNames.length ? setNames[state.setsCursor] : null
+    // 📖 Clamp cursor to valid range to prevent negative-index reads
+    const clampedSetsCursor = Math.max(0, state.setsCursor ?? 0)
+    const selectedSetName = clampedSetsCursor < setNames.length ? setNames[clampedSetsCursor] : null
     const selectedSet = selectedSetName ? (sets[selectedSetName] || null) : null
     const models = selectedSet?.models || []
 
@@ -1731,7 +1737,8 @@ export function createOverlayRenderers(state, deps) {
     const byModel = today.by_model || {}
     const sortedModels = Object.entries(byModel)
       .map(([key, val]) => {
-        const total = isRecord(val) ? (val.total || 0) : Number(val) || 0
+        // 📖 val can be a number (legacy) or { total, prompt, completion } object
+        const total = (val && typeof val === 'object' && !Array.isArray(val)) ? (val.total || 0) : Number(val) || 0
         return { key, total }
       })
       .filter((m) => m.total > 0)
@@ -1826,7 +1833,7 @@ export function createOverlayRenderers(state, deps) {
         const keyLabel = themeColors.hotkey(`  ${opt.key}]`)
         const row = `${bullet(isCursor)}${keyLabel} ${isCursor ? themeColors.textBold(opt.label) : themeColors.text(opt.label)}`
         cursorLineByRow[i] = lines.length
-        lines.push(isCursor ? themeColors.bgCursorSettings(row) : row)
+        lines.push(isCursor ? themeColors.bgCursorSettingsList(row) : row)
         lines.push(themeColors.dim(`      ${opt.hint}`))
         lines.push('')
       }

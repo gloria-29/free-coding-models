@@ -510,27 +510,43 @@ function installIntoEnvBasedTool(providerKey, models, apiKey, toolMode) {
 }
 
 // 📖 installIntoFcmRouter: adds provider endpoints to the running FCM Router daemon
-// via the /sets API so the router can use them for failover routing.
+// 📖 via the /sets API so the router can use them for failover routing.
+// 📖 Uses the daemon's expected schema: { provider, model, priority } per model entry.
 function installIntoFcmRouter(providerKey, models, apiKey) {
   const baseUrl = `http://localhost:${process.env.FCM_ROUTER_PORT || '19280'}`
   const routerSetName = `fcm-${providerKey}`
-  const routerModels = models.map((m) => ({
-    providerKey,
-    modelId: m.modelId,
-    label: m.label || m.modelId,
-    baseUrl: resolveProviderBaseUrl(providerKey),
-    apiKey,
+  // 📖 Map to the daemon's expected model schema (provider + model + priority)
+  const routerModels = models.map((m, index) => ({
+    provider: providerKey,
+    model: m.modelId,
+    priority: index + 1,
   }))
+  const payload = { name: routerSetName, models: routerModels }
 
-  // 📖 First try to create a set for this provider; if it already exists, update it.
-  // 📖 The daemon handles idempotency via upsert behavior.
-  fetch(`${baseUrl}/sets/${encodeURIComponent(routerSetName)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: routerSetName, models: routerModels }),
-  }).catch(() => {
-    // 📖 Daemon not running or unreachable — non-fatal, user will see offline banner
-  })
+  // 📖 Try POST first (creates the set), then PUT to update if it already exists.
+  // 📖 Both are fire-and-forget: the daemon may not be running during install,
+  // 📖 and that's OK — the set will be picked up on next daemon restart via config.
+  void (async () => {
+    try {
+      const createRes = await fetch(`${baseUrl}/sets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(3000),
+      })
+      // 📖 If the set already exists (name conflict), update it via PUT
+      if (!createRes.ok) {
+        await fetch(`${baseUrl}/sets/${encodeURIComponent(routerSetName)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(3000),
+        }).catch(() => {})
+      }
+    } catch {
+      // 📖 Daemon unreachable — silently ignore, user can restart daemon later
+    }
+  })()
 
   return { path: `FCM Router (${baseUrl})`, backupPath: null, providerId: providerKey, modelCount: models.length }
 }
